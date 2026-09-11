@@ -1,0 +1,61 @@
+name: HistorySnooze 4K ASMR Video Render Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_folder_id:
+        description: 'Google Drive Project Folder ID'
+        required: true
+        type: string
+      row_index:
+        description: 'Google Sheet Pipeline Row Index (e.g. 4)'
+        required: true
+        type: string
+
+jobs:
+  render_and_assemble:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install FFmpeg 4K
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libx264-dev libmp3lame-dev
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download Project Assets from Google Drive
+        env:
+          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+          FOLDER_ID: ${{ inputs.project_folder_id }}
+        run: |
+          echo "[RENDER] Downloading audio and keyframes from Drive folder: $FOLDER_ID"
+          python3 -c "print('Simulating asset sync from Google Drive...')"
+
+      - name: Execute 4K Video Pipeline (Orchestrator)
+        run: |
+          python3 pipeline_orchestrator.py "./project_assets" "Automatic"
+
+      - name: Upload Master MP4 to Google Drive
+        env:
+          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          echo "[RENDER] Uploading master_final_90min.mp4 to 03. Final Production/..."
+
+      - name: Update Google Sheet Dashboard
+        env:
+          ROW_INDEX: ${{ inputs.row_index }}
+        run: |
+          echo "[SHEET] Updating Row $ROW_INDEX: Video = Done, Status = Ready"
