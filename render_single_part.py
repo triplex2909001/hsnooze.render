@@ -132,11 +132,11 @@ def render_single_part(project_root: str, part_index: int, max_workers: int = 4)
         part_index=part_index,
         audio_wav_path=audio_wav,
         beat_images=beat_images,
-        output_chunk_path=target_chunk_path,
+        output_dir=chunks_dir,
         temp_dir=temp_dir,
         cues_json_path=cues_json,
-        max_workers=max_workers,
-        force_cpu=True
+        force_cpu=True,
+        max_workers=max_workers
     )
 
     if not is_chunk_valid(rendered_chunk):
