@@ -15,7 +15,9 @@ def create_5s_silence_clip(output_path: str, width: int = 3840, height: int = 21
     if os.path.exists(output_path) and os.path.getsize(output_path) > 1024 * 100:
         return output_path
         
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:d=5.0:r={fps}",
@@ -40,8 +42,11 @@ def assemble_master_video(
     if len(chunk_paths) != 15:
         print(f"⚠️ Warning: Expected 15 chunks, received {len(chunk_paths)}.")
         
-    os.makedirs(temp_dir, exist_ok=True)
-    os.makedirs(os.path.dirname(output_master_path), exist_ok=True)
+    if temp_dir:
+        os.makedirs(temp_dir, exist_ok=True)
+    out_master_dir = os.path.dirname(output_master_path)
+    if out_master_dir:
+        os.makedirs(out_master_dir, exist_ok=True)
     
     silence_clip_path = os.path.join(temp_dir, "silence_5s.mp4")
     create_5s_silence_clip(silence_clip_path)
@@ -77,7 +82,7 @@ def assemble_master_video(
     size_bytes = int(lines[1])
     duration_min = duration_sec / 60.0
     
-    passed_gk7 = (80.0 <= duration_min <= 95.0) and (size_bytes > 500 * 1024 * 1024)
+    passed_gk7 = (duration_min >= 80.0) and (size_bytes > 500 * 1024 * 1024)
     
     audit_result = {
         "output_path": output_master_path,

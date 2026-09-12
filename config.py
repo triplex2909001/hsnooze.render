@@ -13,18 +13,22 @@ HEIGHT = 2160
 FPS = 30
 ASPECT_RATIO = "16:9"
 RESOLUTION = f"{WIDTH}x{HEIGHT}"
+CPU_PRESET = "veryfast"  # Fast CPU encoding for Cloud Runners (GitHub Actions)
 
 # Ken Burns ASMR Motion Parameters
 ZOOM_START = 1.00
-ZOOM_MAX = 1.04          # Maximum 4% zoom over 75-90s
+ZOOM_MAX = 1.04          # Maximum 4% zoom over 25-45s (~30-45s per beat)
 INTER_PART_SILENCE_SEC = 5.0  # 5-second silence between parts
 INTRA_SENTENCE_SILENCE_SEC = 1.0 # 1.0s silence between sentences
 INTER_PARAGRAPH_SILENCE_SEC = 2.0 # 2.0s silence between paragraphs
 
 # Story Structure
 TOTAL_PARTS = 15
-EXPECTED_MIN_BEATS = 45
-EXPECTED_MAX_BEATS = 60
+EXPECTED_MIN_BEATS = 150  # Scaled for 150-160 high-density beats (~10 beats/part)
+EXPECTED_MAX_BEATS = 160
+TARGET_BEATS_PER_PART = 10
+BEAT_MIN_DURATION_SEC = 25.0
+BEAT_MAX_DURATION_SEC = 45.0
 CHUNK_MIN_WORDS = 15
 CHUNK_MAX_WORDS = 35
 
@@ -40,7 +44,7 @@ STATUS_FLOW = [
     "Pending",     # Approved by human, queued for agent execution
     "Script",      # Outline & 15-part script completed
     "Voiceover",   # 15 WAV audio files generated
-    "Image",       # 45-60 4K keyframe images generated
+    "Image",       # 150-160 4K keyframe images generated (~10 beats/part)
     "Video",       # 15 chunks rendered & master video assembled
     "Ready",       # Passed all Gatekeepers (GK1-GK7), QA approved, ready for YouTube upload
     "Done"         # Successfully published to YouTube via Buffer API
@@ -71,7 +75,15 @@ DEFAULT_VOICE_NAME = "Milo (Calm, Soothing & Meditative)"
 DEFAULT_VOICE_PATH = "mainvoice/voice_preview_milo.mp3"
 
 
-# Google Sheet Column Schema (A - N)
+# Video Generation Execution Modes
+VIDEO_MODES = [
+    "Colab",   # Google Colab: GPU T4/L4 accelerated FFmpeg with Ken Burns effect
+    "GHA"      # GitHub Actions: 15 parallel matrix jobs on CPU
+]
+DEFAULT_VIDEO_MODE = "Colab"
+
+
+# Google Sheet Column Schema (A - O)
 COLUMNS = {
     "A": "Idea_ID",
     "B": "Historical_Figure",
@@ -84,9 +96,10 @@ COLUMNS = {
     "I": "Voiceover",
     "J": "Image_Mode",   # "Automatic" vs "Manual" (Default: "Automatic")
     "K": "Image",
-    "L": "Video",
-    "M": "YouTube",      # Link YouTube video URL via Buffer API
-    "N": "Updated_At"
+    "L": "Video_Mode",   # "Colab" vs "GHA" (Default: "Colab")
+    "M": "Video",
+    "N": "YouTube",      # Link YouTube video URL via Buffer API
+    "O": "Updated_At"
 }
 
 # Gatekeeper Quality Thresholds
@@ -94,6 +107,12 @@ GK4_MIN_WAV_SIZE_KB = 10
 GK4_RMS_THRESHOLD = 0.003
 GK4_PEAK_THRESHOLD = 0.02
 GK4_MIN_SEC_PER_WORD = 0.15
+
+GK3_MIN_PROMPTS = EXPECTED_MIN_BEATS
+GK3_MAX_PROMPTS = EXPECTED_MAX_BEATS
+GK3_MIN_BEATS_PER_PART = TARGET_BEATS_PER_PART
+GK6_MIN_KEYFRAMES = EXPECTED_MIN_BEATS
+GK6_MIN_BEATS_PER_PART = TARGET_BEATS_PER_PART
 
 GK5_MIN_IMAGE_SIZE_KB = 30
 GK7_MIN_VIDEO_DURATION_MIN = 80

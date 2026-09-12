@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       row_index:
-        description: 'Google Sheet Pipeline Row Index (e.g. 4)'
+        description: 'Google Sheet Pipeline Row Index (e.g. 5)'
         required: true
         type: string
 
@@ -37,25 +37,31 @@ jobs:
           pip install -r requirements.txt
 
       - name: Download Project Assets from Google Drive
-        env:
-          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
-          FOLDER_ID: ${{ inputs.project_folder_id }}
         run: |
-          echo "[RENDER] Downloading audio and keyframes from Drive folder: $FOLDER_ID"
-          python3 -c "print('Simulating asset sync from Google Drive...')"
+          echo "[RENDER] Downloading audio and keyframes from Drive folder: ${{ inputs.project_folder_id }}"
+          python3 download_drive_assets.py "${{ inputs.project_folder_id }}" "./project_assets"
 
       - name: Execute 4K Video Pipeline (Orchestrator)
         run: |
-          python3 pipeline_orchestrator.py "./project_assets" "Automatic"
+          python3 pipeline_orchestrator.py "./project_assets" "Automatic" 4
 
-      - name: Upload Master MP4 to Google Drive
-        env:
-          GDRIVE_SERVICE_ACCOUNT_KEY: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_KEY }}
-        run: |
-          echo "[RENDER] Uploading master_final_90min.mp4 to 03. Final Production/..."
+      - name: Upload Master MP4 and Chunks Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: historysnooze-render-row-${{ inputs.row_index }}
+          path: |
+            project_assets/03. Final Production/*.mp4
+            project_assets/02. Media Generation/video/*.mp4
+            project_assets/02. Media Generation/chunks/*.mp4
+            output/*.mp4
+          retention-days: 14
 
-      - name: Update Google Sheet Dashboard
+      - name: Complete Render Pipeline
         env:
           ROW_INDEX: ${{ inputs.row_index }}
         run: |
-          echo "[SHEET] Updating Row $ROW_INDEX: Video = Done, Status = Ready"
+          echo "=================================================="
+          echo "🎉 Video Render Pipeline Complete for Row $ROW_INDEX!"
+          echo "Status: Video = Done, Pipeline = Ready"
+          echo "=================================================="
