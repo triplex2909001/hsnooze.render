@@ -1,22 +1,24 @@
 """
 HistorySnooze Asset Downloader for GitHub Actions / Cloud Runners
-Downloads voiceover audio, keyframes, and prompt manifests from Google Drive.
-Supports public Drive folders via gdown with fallback direct subfolder sync.
+Downloads voiceover audio, keyframes, and prompt manifests.
+Combines ultra-fast GitHub Release CDN for 150 keyframe bundle with Google Drive sync.
 """
 
 import os
 import sys
 import glob
 import shutil
+import urllib.request
+import tarfile
 from pathlib import Path
 
-# Known subfolder IDs for Matsuo Bashō (and fallback mapping)
+KEYFRAMES_RELEASE_URL = "https://github.com/triplex2909001/hsnooze.render/releases/download/v-assets-basho/keyframes_bundle.tar.gz"
+
 KNOWN_SUBFOLDERS = {
     "1TILhfJstpKX3stnzIzBk6A8ZZKqc7wtc": {
         "audio": "1LernpBWI1DlePFLQiVqTTSGYA9435NjK",
         "keyframes": "19krkuGIJ8l1eyASLIhKyi1oQS9f5cjmm",
         "combined": "1LQQtIcqoMPHqo7Pmpr_zirgCg723SnnY",
-        "references": "1gN6zMml-lliz_wMf6o3e3_iSzOD9fx_B",
     }
 }
 
@@ -35,103 +37,82 @@ def download_project_assets(folder_id: str, target_dir: str):
     keyframes_dir.mkdir(parents=True, exist_ok=True)
     combined_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[DOWNLOAD] Initiating Google Drive asset sync for folder: {folder_id}")
-    print(f"[DOWNLOAD] Destination: {target_path}")
+    print(f"[DOWNLOAD] Initiating asset sync for Project: {folder_id}")
+    print(f"[DOWNLOAD] Target Directory: {target_path}")
 
-    # 1. Attempt full recursive folder download
+    # --- 1. KEYFRAME BEATS (Ultra-fast CDN Release Bundle) ---
+    print(f"[DOWNLOAD] Fetching 150-beat keyframe bundle from GitHub CDN...")
+    bundle_tar = target_path / "keyframes_bundle.tar.gz"
+    downloaded_bundle = False
     try:
-        print("[DOWNLOAD] Downloading complete project folder hierarchy...")
-        gdown.download_folder(
-            id=folder_id,
-            output=str(target_path),
-            quiet=False,
-            use_cookies=False
-        )
+        req = urllib.request.Request(KEYFRAMES_RELEASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp, open(bundle_tar, "wb") as f_out:
+            shutil.copyfileobj(resp, f_out)
+        print(f"[DOWNLOAD] Keyframe bundle downloaded ({bundle_tar.stat().st_size / 1024 / 1024:.1f} MB). Extracting...")
+        with tarfile.open(bundle_tar, "r:gz") as tar:
+            tar.extractall(path=str(keyframes_dir))
+        downloaded_bundle = True
+        print(f"✓ Successfully unpacked keyframes into {keyframes_dir}")
     except Exception as e:
-        print(f"⚠️ Warning during root folder download: {e}")
+        print(f"⚠️ CDN bundle download fallback: {e}")
 
-    # Check downloaded assets
-    wavs = list(audio_dir.glob("Part_*.wav")) + list(target_path.glob("**/Part_*.wav"))
-    keyframes = list(keyframes_dir.glob("beat_*.jp*g")) + list(keyframes_dir.glob("beat_*.png")) + list(target_path.glob("**/beat_*.jp*g"))
-
-    # 2. Fallback / Direct subfolder download if needed
-    subfolder_map = KNOWN_SUBFOLDERS.get(folder_id, {})
-
-    if len(wavs) < 15 and "audio" in subfolder_map:
-        print(f"[DOWNLOAD] Fallback: Direct download audio folder {subfolder_map['audio']}...")
-        try:
-            gdown.download_folder(
-                id=subfolder_map["audio"],
-                output=str(audio_dir),
-                quiet=False,
-                use_cookies=False
-            )
-        except Exception as e:
-            print(f"Error downloading audio: {e}")
-
-    if len(keyframes) < 150 and "keyframes" in subfolder_map:
-        print(f"[DOWNLOAD] Fallback: Direct download keyframes folder {subfolder_map['keyframes']}...")
-        try:
-            gdown.download_folder(
-                id=subfolder_map["keyframes"],
-                output=str(keyframes_dir),
-                quiet=False,
-                use_cookies=False
-            )
-        except Exception as e:
-            print(f"Error downloading keyframes: {e}")
-
-    if "combined" in subfolder_map:
-        prompts_file = media_gen_dir / "combined_imageprompts.txt"
-        if not prompts_file.exists():
-            print(f"[DOWNLOAD] Downloading combined prompts folder {subfolder_map['combined']}...")
+    # Fallback to gdown if bundle extraction failed
+    existing_kfs = list(keyframes_dir.glob("beat_*.jp*g")) + list(keyframes_dir.glob("beat_*.png"))
+    if len(existing_kfs) < 150:
+        subfolder_map = KNOWN_SUBFOLDERS.get(folder_id, {})
+        kf_id = subfolder_map.get("keyframes")
+        if kf_id:
+            print(f"[DOWNLOAD] Falling back to direct Drive keyframes sync ({kf_id})...")
             try:
-                gdown.download_folder(
-                    id=subfolder_map["combined"],
-                    output=str(combined_dir),
-                    quiet=False,
-                    use_cookies=False
-                )
+                gdown.download_folder(id=kf_id, output=str(keyframes_dir), quiet=True, use_cookies=False)
             except Exception as e:
-                print(f"Error downloading combined folder: {e}")
+                print(f"Drive keyframe sync warning: {e}")
 
-    # 3. Flatten / Reorganize into expected canonical structure
-    # Audio
-    found_wavs = sorted(target_path.glob("**/Part_*.wav"))
-    for w in found_wavs:
+    # --- 2. AUDIO PARTS (Direct Drive Audio Folder Sync) ---
+    subfolder_map = KNOWN_SUBFOLDERS.get(folder_id, {})
+    audio_id = subfolder_map.get("audio", "1LernpBWI1DlePFLQiVqTTSGYA9435NjK")
+    print(f"[DOWNLOAD] Syncing 15 audio WAV parts from Drive folder ({audio_id})...")
+    try:
+        gdown.download_folder(id=audio_id, output=str(audio_dir), quiet=False, use_cookies=False)
+    except Exception as e:
+        print(f"⚠️ Warning during audio sync: {e}")
+
+    # Re-check flattened WAV files
+    for w in target_path.glob("**/Part_*.wav"):
         dest = audio_dir / w.name
         if dest.resolve() != w.resolve():
             shutil.copy2(w, dest)
 
-    # Keyframes
-    found_kfs = sorted(list(target_path.glob("**/beat_*.jp*g")) + list(target_path.glob("**/beat_*.png")))
-    for kf in found_kfs:
-        dest = keyframes_dir / kf.name
-        if dest.resolve() != kf.resolve():
-            shutil.copy2(kf, dest)
+    # --- 3. PROMPTS & MANIFEST ---
+    repo_prompts = Path("combined_imageprompts.txt")
+    if repo_prompts.exists():
+        shutil.copy2(repo_prompts, target_path / "combined_imageprompts.txt")
+        shutil.copy2(repo_prompts, media_gen_dir / "combined_imageprompts.txt")
+        shutil.copy2(repo_prompts, combined_dir / "combined_imageprompts.txt")
+        print("✓ Loaded combined_imageprompts.txt from repository")
+    else:
+        comb_id = subfolder_map.get("combined")
+        if comb_id:
+            try:
+                gdown.download_folder(id=comb_id, output=str(combined_dir), quiet=True, use_cookies=False)
+            except Exception as e:
+                print(f"Warning downloading combined folder: {e}")
 
-    # Prompts
-    found_prompts = list(target_path.glob("**/combined_imageprompts.txt"))
-    for p in found_prompts:
-        dest1 = media_gen_dir / "combined_imageprompts.txt"
-        dest2 = target_path / "combined_imageprompts.txt"
-        if dest1.resolve() != p.resolve():
-            shutil.copy2(p, dest1)
-        if dest2.resolve() != p.resolve():
-            shutil.copy2(p, dest2)
-
-    # Audit final state
+    # Final Audit
     final_wavs = sorted(audio_dir.glob("Part_*.wav"))
     final_kfs = sorted(list(keyframes_dir.glob("beat_*.jp*g")) + list(keyframes_dir.glob("beat_*.png")))
+    # Deduplicate stems
+    unique_stems = {os.path.splitext(f.name)[0] for f in final_kfs}
+
     print(f"==================================================")
     print(f"✅ ASSET DOWNLOAD COMPLETE:")
     print(f"   Audio Parts:    {len(final_wavs)}/15 WAVs")
-    print(f"   Keyframe Beats: {len(final_kfs)}/150 Images")
+    print(f"   Keyframe Beats: {len(unique_stems)}/150 Unique Beats")
     print(f"   Target Root:    {target_path}")
     print(f"==================================================")
 
-    if len(final_wavs) < 15 or len(final_kfs) < 150:
-        print(f"⚠️ Warning: Assets incomplete! WAVs={len(final_wavs)}, Keyframes={len(final_kfs)}")
+    if len(final_wavs) < 15 or len(unique_stems) < 150:
+        print(f"❌ Asset verification failed: WAVs={len(final_wavs)}/15, Beats={len(unique_stems)}/150")
         sys.exit(1)
 
 
