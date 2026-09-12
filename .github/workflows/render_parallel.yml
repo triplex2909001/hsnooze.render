@@ -1,0 +1,116 @@
+name: HistorySnooze 4K ASMR Parallel Matrix Render Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_folder_id:
+        description: 'Google Drive Project Folder ID'
+        required: true
+        default: '1TILhfJstpKX3stnzIzBk6A8ZZKqc7wtc'
+        type: string
+      row_index:
+        description: 'Google Sheet Pipeline Row Index (e.g. 5)'
+        required: true
+        default: '5'
+        type: string
+      release_tag:
+        description: 'GitHub Release Tag for Assets CDN'
+        required: false
+        default: 'v-assets-basho'
+        type: string
+
+jobs:
+  # ============================================================================
+  # Stage 1: Distributed 15-Way Parallel Part Chunk Rendering (Map Phase)
+  # 15 Independent Ubuntu Runners execute simultaneously (~8-10 mins total)
+  # ============================================================================
+  render_matrix:
+    name: Render Part ${{ matrix.part }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install FFmpeg 4K
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libx264-dev libmp3lame-dev
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Render Part ${{ matrix.part }} (Ken Burns ASMR + Dim-the-Lights)
+        run: |
+          python3 render_single_part.py "./project_assets" ${{ matrix.part }} 4
+
+      - name: Upload Chunk Artifact (Part ${{ matrix.part }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunk-part-${{ matrix.part }}
+          path: output/chunk_part_${{ matrix.part }}.mp4
+          retention-days: 7
+
+  # ============================================================================
+  # Stage 2: Master Concatenation & Gatekeeper GK7 Verification (Reduce Phase)
+  # Streams 15 Part chunks into Master 90-min 4K MP4 via FFmpeg Copy (<30 secs)
+  # ============================================================================
+  assemble_master:
+    name: Assemble Master Video & GK7 Audit
+    needs: render_matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Download All 15 Part Chunks
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chunk-part-*
+          merge-multiple: true
+          path: ./all_chunks
+
+      - name: Execute Stream Copy Master Assembly & GK7 Audit
+        run: |
+          python3 assemble_master.py ./all_chunks ./output/master_final_90min.mp4
+
+      - name: Upload Final Master MP4 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: historysnooze-master-video-row-${{ inputs.row_index }}
+          path: output/master_final_90min.mp4
+          retention-days: 14
+
+      - name: Production Complete Notification
+        env:
+          ROW_INDEX: ${{ inputs.row_index }}
+        run: |
+          echo "=================================================="
+          echo "🎉 Parallel Matrix Render Complete for Row $ROW_INDEX!"
+          echo "Status: Video = Done, Pipeline = Ready"
+          echo "=================================================="
