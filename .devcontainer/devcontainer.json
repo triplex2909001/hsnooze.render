@@ -1,0 +1,44 @@
+{
+  "name": "HistorySnooze - Orchestrator & Media Sandbox",
+  "dockerComposeFile": [
+    "../docker/docker-compose.yml"
+  ],
+  "service": "hsnooze-sandbox",
+  "workspaceFolder": "/workspace",
+  "remoteUser": "appuser",
+  "runArgs": [
+    "--security-opt", "no-new-privileges:true",
+    "--cap-drop", "ALL",
+    "--tmpfs", "/dev/shm:rw,noexec,nosuid,size=512m"
+  ],
+  "postCreateCommand": "pre-commit install || true",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python3",
+        "python.linting.enabled": true,
+        "python.formatting.provider": "none",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll": "explicit"
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "esbenp.prettier-vscode",
+        "usernamehw.errorlens",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml"
+      ]
+    }
+  }
+}

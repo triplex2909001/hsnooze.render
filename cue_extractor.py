@@ -126,22 +126,49 @@ def extract_part01_cue_timestamps(
             with wave.open(part_01_wav_path, "rb") as wf:
                 framerate = wf.getframerate()
                 n_frames = wf.getnframes()
-                raw = wf.readframes(n_frames)
+                n_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
 
-            samples = struct.unpack(f"<{n_frames}h", raw)
-            zero_threshold = int(framerate * (intra_silence_sec * 0.8))
-            current_zero_count = 0
-            zero_intervals = []
+                zero_threshold = int(framerate * (intra_silence_sec * 0.8))
+                current_zero_count = 0
+                zero_intervals = []
+                frame_offset = 0
+                chunk_size = framerate  # Stream in 1-second chunks to bound RAM to < 1 MB
 
-            for i, s in enumerate(samples):
-                if s == 0:
-                    current_zero_count += 1
-                else:
-                    if current_zero_count >= zero_threshold:
-                        start_s = (i - current_zero_count) / framerate
-                        end_s = i / framerate
-                        zero_intervals.append((start_s, end_s))
-                    current_zero_count = 0
+                while frame_offset < n_frames:
+                    frames_to_read = min(chunk_size, n_frames - frame_offset)
+                    raw = wf.readframes(frames_to_read)
+                    if not raw:
+                        break
+
+                    try:
+                        import numpy as np
+                        chunk_samples = np.frombuffer(raw, dtype=np.int16)
+                        if n_channels > 1:
+                            chunk_samples = chunk_samples.reshape(-1, n_channels)[:, 0]
+                        is_silence = (np.abs(chunk_samples) <= 100)
+                    except Exception:
+                        num_samps = len(raw) // (sampwidth or 2)
+                        chunk_samples = struct.unpack(f"<{num_samps}h", raw)
+                        if n_channels > 1:
+                            chunk_samples = chunk_samples[::n_channels]
+                        is_silence = [abs(s) <= 100 for s in chunk_samples]
+
+                    for s_silence in is_silence:
+                        if s_silence:
+                            current_zero_count += 1
+                        else:
+                            if current_zero_count >= zero_threshold:
+                                start_s = (frame_offset - current_zero_count) / framerate
+                                end_s = frame_offset / framerate
+                                zero_intervals.append((start_s, end_s))
+                            current_zero_count = 0
+                        frame_offset += 1
+
+                if current_zero_count >= zero_threshold:
+                    start_s = (frame_offset - current_zero_count) / framerate
+                    end_s = frame_offset / framerate
+                    zero_intervals.append((start_s, end_s))
 
             # Chunk 17 lies between silence 16 (end) and silence 17 (start)
             if len(zero_intervals) >= 17:

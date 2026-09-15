@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  hsnooze-sandbox:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: historysnooze-sandbox:latest
+    container_name: hsnooze_orchestrator_instance
+    
+    # Strictly execute as non-root UID 1000, GID 1000
+    user: "1000:1000"
+    
+    # Zero-Idle Ephemeral Lifecycle: Do not restart automatically
+    restart: "no"
+    
+    # Security Confinement: Disallow privilege escalation and drop all Linux capabilities
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+      
+    # RAM-Only temporary storage for Headless Chrome and sensitive vault decryption
+    # 512MB prevents Chromium canvas/rendering exhaustion on 4K assets
+    tmpfs:
+      - /dev/shm:rw,noexec,nosuid,size=512m
+      
+    # Volume mounts: cached workspace and strictly read-only credentials profile
+    volumes:
+      - ..:/workspace:cached
+      - ${CLOUD_PROFILE_PATH:-~/.cloud-profiles/historysnooze}:/workspace/.secrets:ro
+      
+    # Environment variable matrix per Documents/Structure/00_TONG_QUAN.md
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONPATH=/workspace
+      # Google Drive & Identity Binding
+      - GDRIVE_ACCOUNT=triplex2909.002@gmail.com
+      - GDRIVE_TOKEN_PATH=/workspace/.secrets/gdrive/token.json
+      # NotebookLM Identity Binding
+      - NOTEBOOKLM_ACCOUNT=lchau4501@gmail.com
+      - NOTEBOOKLM_PROFILE=default
+      # Central Ledger / Google Sheets Dashboard
+      - SPREADSHEET_ID=1x2tcR4WyHXj_cvHjpPFWNsrtelkimUXJXNTw9hPbVeo
+      # Dedicated Telegram Bot Isolation (Strictly container-bound, no cross-borrowing)
+      - TELEGRAM_BOT_TOKEN_PATH=/workspace/.secrets/telegram/bot_token.txt
+      # Headless Chrome / Google Flow Driver
+      - HEADLESS_CHROME=1
+      - GFLOW_CHROME_PATH=/usr/bin/google-chrome
+      
+    # Resource limits to guarantee VPS host stability
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8G
+        reservations:
+          memory: 2G
+          
+    # Standard I/O allocation for CLI interactivity
+    stdin_open: true
+    tty: true

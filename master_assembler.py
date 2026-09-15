@@ -30,46 +30,10 @@ def create_5s_silence_clip(output_path: str, width: int = 3840, height: int = 21
     subprocess.run(cmd, check=True)
     return output_path
 
-def assemble_master_video(
-    chunk_paths: List[str],
-    output_master_path: str,
-    temp_dir: str
-) -> Dict[str, any]:
+def audit_master_video_gk7(output_master_path: str) -> Dict[str, any]:
     """
-    Concatenates all 15 Part chunks with 5-second silences between them.
-    Performs Stream Copy (-c copy) to assemble the final 90-minute MP4 without re-encoding.
+    Validates Gatekeeper GK7: duration between 80.0-95.0 mins and file size > 500 MB.
     """
-    if len(chunk_paths) != 15:
-        print(f"⚠️ Warning: Expected 15 chunks, received {len(chunk_paths)}.")
-        
-    if temp_dir:
-        os.makedirs(temp_dir, exist_ok=True)
-    out_master_dir = os.path.dirname(output_master_path)
-    if out_master_dir:
-        os.makedirs(out_master_dir, exist_ok=True)
-    
-    silence_clip_path = os.path.join(temp_dir, "silence_5s.mp4")
-    create_5s_silence_clip(silence_clip_path)
-    
-    concat_list_path = os.path.join(temp_dir, "master_concat_list.txt")
-    with open(concat_list_path, "w", encoding="utf-8") as f_list:
-        for idx, chunk in enumerate(chunk_paths, start=1):
-            f_list.write(f"file '{os.path.abspath(chunk)}'\n")
-            # Interleave 5s silence between parts (except after the final part)
-            if idx < len(chunk_paths):
-                f_list.write(f"file '{os.path.abspath(silence_clip_path)}'\n")
-                
-    print(f"[ASSEMBLER] Concatenating master video via stream copy...")
-    cmd_concat = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-f", "concat", "-safe", "0",
-        "-i", concat_list_path,
-        "-c", "copy",
-        output_master_path
-    ]
-    subprocess.run(cmd_concat, check=True)
-    
-    # Audit Gatekeeper GK7
     cmd_probe = [
         "ffprobe", "-v", "error",
         "-show_entries", "format=duration:format=size",
@@ -81,9 +45,16 @@ def assemble_master_video(
     duration_sec = float(lines[0])
     size_bytes = int(lines[1])
     duration_min = duration_sec / 60.0
-    
-    passed_gk7 = (duration_min >= 80.0) and (size_bytes > 500 * 1024 * 1024)
-    
+
+    try:
+        import config
+        min_dur = getattr(config, "GK7_MIN_VIDEO_DURATION_MIN", 80.0)
+        max_dur = getattr(config, "GK7_MAX_VIDEO_DURATION_MIN", 95.0)
+    except ImportError:
+        min_dur, max_dur = 80.0, 95.0
+
+    passed_gk7 = (min_dur <= duration_min <= max_dur) and (size_bytes > 500 * 1024 * 1024)
+
     audit_result = {
         "output_path": output_master_path,
         "duration_minutes": round(duration_min, 2),
@@ -91,6 +62,48 @@ def assemble_master_video(
         "file_size_gb": round(size_bytes / (1024 ** 3), 2),
         "passed_gk7": passed_gk7
     }
-    
-    print(f"🎬 Master Assembly Complete: {duration_min:.1f} mins, {audit_result['file_size_gb']} GB (GK7: {'PASSED' if passed_gk7 else 'FAILED'})")
+    return audit_result
+
+
+def assemble_master_video(
+    chunk_paths: List[str],
+    output_master_path: str,
+    temp_dir: str
+) -> Dict[str, any]:
+    """
+    Concatenates all 15 Part chunks with 5-second silences between them.
+    Performs Stream Copy (-c copy) to assemble the final 90-minute MP4 without re-encoding.
+    """
+    if len(chunk_paths) != 15:
+        print(f"⚠️ Warning: Expected 15 chunks, received {len(chunk_paths)}.")
+
+    if temp_dir:
+        os.makedirs(temp_dir, exist_ok=True)
+    out_master_dir = os.path.dirname(output_master_path)
+    if out_master_dir:
+        os.makedirs(out_master_dir, exist_ok=True)
+
+    silence_clip_path = os.path.join(temp_dir, "silence_5s.mp4")
+    create_5s_silence_clip(silence_clip_path)
+
+    concat_list_path = os.path.join(temp_dir, "master_concat_list.txt")
+    with open(concat_list_path, "w", encoding="utf-8") as f_list:
+        for idx, chunk in enumerate(chunk_paths, start=1):
+            f_list.write(f"file '{os.path.abspath(chunk)}'\n")
+            # Interleave 5s silence between parts (except after the final part)
+            if idx < len(chunk_paths):
+                f_list.write(f"file '{os.path.abspath(silence_clip_path)}'\n")
+
+    print(f"[ASSEMBLER] Concatenating master video via stream copy...")
+    cmd_concat = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "concat", "-safe", "0",
+        "-i", concat_list_path,
+        "-c", "copy",
+        output_master_path
+    ]
+    subprocess.run(cmd_concat, check=True)
+
+    audit_result = audit_master_video_gk7(output_master_path)
+    print(f"🎬 Master Assembly Complete: {audit_result['duration_minutes']:.1f} mins, {audit_result['file_size_gb']} GB (GK7: {'PASSED' if audit_result['passed_gk7'] else 'FAILED'})")
     return audit_result

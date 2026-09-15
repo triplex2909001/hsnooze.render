@@ -61,7 +61,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: chunk-part-${{ matrix.part }}
-          path: output/chunk_part_${{ matrix.part }}.mp4
+          path: output/chunk_part_*.mp4
           retention-days: 7
 
   # ============================================================================

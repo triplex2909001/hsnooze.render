@@ -4,6 +4,7 @@ Version: 1.2.0 (100% Online Serverless & Colab CLI Edition)
 Single Source of Truth (SSOT) compliant configuration for 90-minute sleep documentary pipeline.
 """
 
+import os
 from dataclasses import dataclass
 from typing import Dict, Tuple, List
 
@@ -38,13 +39,18 @@ DASHBOARD_SHEET_ID = "1x2tcR4WyHXj_cvHjpPFWNsrtelkimUXJXNTw9hPbVeo"
 SSOT_FOLDER_ID = "1aV8nBelLqXclJLScwKx-c4H-GMjtxGX0"
 CODE_FOLDER_ID = "1mzeigkeg5vxapdHTQ8wHhYE8Y6gY3se9"
 
+# Sleep Mood Parameters
+DEFAULT_VIGNETTE = "none"
+SLEEP_VIGNETTE = os.getenv("HSNOOZE_VIGNETTE", DEFAULT_VIGNETTE)  # "none" for uniform dimming with zero oval border
+
 # Pipeline Status Lifecycle Flow
 STATUS_FLOW = [
     "Proposed",    # New idea suggested
     "Pending",     # Approved by human, queued for agent execution
     "Script",      # Outline & 15-part script completed
     "Voiceover",   # 15 WAV audio files generated
-    "Image",       # 150-160 4K keyframe images generated (~10 beats/part)
+    "JPEG",        # Automated keyframes generated (excluding Cover); Human-in-the-loop pause
+    "Image",       # 150-160 4K keyframe images complete (including manual Cover), ready for render
     "Video",       # 15 chunks rendered & master video assembled
     "Ready",       # Passed all Gatekeepers (GK1-GK7), QA approved, ready for YouTube upload
     "Done"         # Successfully published to YouTube via Buffer API

@@ -140,45 +140,64 @@ def generate_ambient_stardust_loop(
 
     t0 = time.time()
     pipe = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+    success = False
 
-    for frame_idx in range(total_frames):
-        t_norm = frame_idx / total_frames  # [0.0, 1.0)
+    try:
+        for frame_idx in range(total_frames):
+            t_norm = frame_idx / total_frames  # [0.0, 1.0)
 
-        # Pure black canvas
-        canvas = np.zeros((height, width, 3), dtype=np.uint8)
+            # Pure black canvas
+            canvas = np.zeros((height, width, 3), dtype=np.uint8)
 
-        # Draw particles
-        for p in particles:
-            # Linear periodic toroidal wrap
-            x = (p["x0"] + p["k_x"] * width * t_norm) % width
-            y = (p["y0"] + p["k_y"] * height * t_norm) % height
+            # Draw particles
+            for p in particles:
+                # Linear periodic toroidal wrap
+                x = (p["x0"] + p["k_x"] * width * t_norm) % width
+                y = (p["y0"] + p["k_y"] * height * t_norm) % height
 
-            # Harmonic sinusoidal sway (exact 0 at t_norm=0 and t_norm=1)
-            x += p["amp_x"] * math.sin(2 * math.pi * p["freq_x"] * t_norm + p["phase_x"])
-            y += p["amp_y"] * math.sin(2 * math.pi * p["freq_y"] * t_norm + p["phase_y"])
-            x = int(x) % width
-            y = int(y) % height
+                # Harmonic sinusoidal sway (exact 0 at t_norm=0 and t_norm=1)
+                x += p["amp_x"] * math.sin(2 * math.pi * p["freq_x"] * t_norm + p["phase_x"])
+                y += p["amp_y"] * math.sin(2 * math.pi * p["freq_y"] * t_norm + p["phase_y"])
+                x = int(x) % width
+                y = int(y) % height
 
-            # Twinkle modulation (exact match at t_norm=0 and t_norm=1)
-            pulse = 1.0 + p["twinkle_depth"] * math.sin(2 * math.pi * p["twinkle_freq"] * t_norm + p["twinkle_phase"])
-            cur_alpha = min(1.0, max(0.0, p["base_alpha"] * pulse))
+                # Twinkle modulation (exact match at t_norm=0 and t_norm=1)
+                pulse = 1.0 + p["twinkle_depth"] * math.sin(2 * math.pi * p["twinkle_freq"] * t_norm + p["twinkle_phase"])
+                cur_alpha = min(1.0, max(0.0, p["base_alpha"] * pulse))
 
-            # Scaled color
-            b, g, r = p["base_color"]
-            col = (int(b * cur_alpha), int(g * cur_alpha), int(r * cur_alpha))
+                # Scaled color
+                b, g, r = p["base_color"]
+                col = (int(b * cur_alpha), int(g * cur_alpha), int(r * cur_alpha))
 
-            cv2.circle(canvas, (x, y), p["radius"], col, -1, cv2.LINE_AA)
+                cv2.circle(canvas, (x, y), p["radius"], col, -1, cv2.LINE_AA)
 
-        # Gentle subtle blur on large/medium particles to create hypnotic glowing bokeh
-        canvas = cv2.GaussianBlur(canvas, (5, 5), 0)
+            # Gentle subtle blur on large/medium particles to create hypnotic glowing bokeh
+            canvas = cv2.GaussianBlur(canvas, (5, 5), 0)
 
-        # Write to FFmpeg stdin
-        pipe.stdin.write(canvas.tobytes())
+            # Write to FFmpeg stdin
+            pipe.stdin.write(canvas.tobytes())
 
-    pipe.stdin.close()
-    pipe.wait()
-    if pipe.returncode != 0:
-        raise RuntimeError(f"FFmpeg encoding failed with return code {pipe.returncode}")
+        pipe.stdin.close()
+        pipe.wait()
+        if pipe.returncode != 0:
+            raise RuntimeError(f"FFmpeg encoding failed with return code {pipe.returncode}")
+        success = True
+    except (BrokenPipeError, Exception) as exc:
+        raise RuntimeError(f"Stardust generation aborted: {exc}") from exc
+    finally:
+        if pipe.stdin and not pipe.stdin.closed:
+            try:
+                pipe.stdin.close()
+            except OSError:
+                pass
+        if pipe.poll() is None:
+            pipe.kill()
+            pipe.wait()
+        if not success and os.path.lexists(abs_output):
+            try:
+                os.remove(abs_output)
+            except OSError:
+                pass
 
     elapsed = time.time() - t0
     file_size_mb = os.path.getsize(abs_output) / (1024 * 1024)

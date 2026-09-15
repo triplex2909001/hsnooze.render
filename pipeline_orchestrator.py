@@ -69,7 +69,8 @@ def audit_gk3_prompts(project_root: str, prompts_file_path: Optional[str] = None
             "part_counts": {p: 0 for p in range(1, total_parts + 1)},
             "deficient_parts": list(range(1, total_parts + 1)),
             "prompts_file_path": prompts_file_path,
-            "details": [f"combined_imageprompts.txt not found in {project_root}"]
+            "details": [f"combined_imageprompts.txt not found in {project_root}"],
+            "warnings": []
         }
         
     with open(prompts_file_path, "r", encoding="utf-8") as f:
@@ -78,6 +79,8 @@ def audit_gk3_prompts(project_root: str, prompts_file_path: Optional[str] = None
     part_beats = {p: [] for p in range(1, total_parts + 1)}
     total_beats = 0
     details = []
+    warnings = []
+    _warned_prompt_engine = False
     
     beat_pattern = re.compile(r"^beat_P(\d{2})_B(\d{2})(?:\.jpg|\.png|\.jpeg)?\s*:\s*(.*)$", re.IGNORECASE)
     
@@ -116,9 +119,11 @@ def audit_gk3_prompts(project_root: str, prompts_file_path: Optional[str] = None
                             f"Line {line_num} (Part {part_idx:02d} Beat {beat_idx:02d}): Prompt validation failed"
                         )
             else:
-                details.append(
-                    f"Line {line_num} (Part {part_idx:02d} Beat {beat_idx:02d}): prompt_engine.validate_prompt is unavailable"
-                )
+                if not _warned_prompt_engine:
+                    msg = "prompt_engine is unavailable; skipping semantic prompt syntax audit."
+                    warnings.append(msg)
+                    print(f"⚠️ Gatekeeper GK3 Warning: {msg}")
+                    _warned_prompt_engine = True
         elif ":" in line and line.lower().startswith("beat_"):
             details.append(f"Line {line_num}: Malformed beat line format: '{line[:50]}'")
             
@@ -146,7 +151,8 @@ def audit_gk3_prompts(project_root: str, prompts_file_path: Optional[str] = None
         "part_counts": part_counts,
         "deficient_parts": deficient_parts,
         "prompts_file_path": prompts_file_path,
-        "details": details
+        "details": details,
+        "warnings": warnings
     }
 
 
@@ -209,11 +215,10 @@ def audit_gk6_assets(project_root: str) -> Dict[str, Any]:
     target_per_part = getattr(config, "TARGET_BEATS_PER_PART", 10)
     
     wav_files = sorted(glob.glob(os.path.join(audio_dir, "Part_*.wav")))
-    raw_img_files = sorted(
-        glob.glob(os.path.join(keyframes_dir, "beat_*.jpg")) + 
-        glob.glob(os.path.join(keyframes_dir, "beat_*.jpeg")) +
-        glob.glob(os.path.join(keyframes_dir, "beat_*.png"))
-    )
+    raw_img_files = []
+    for ext in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"):
+        raw_img_files.extend(glob.glob(os.path.join(keyframes_dir, f"beat_{ext}")))
+    raw_img_files.sort()
     # Deduplicate stems so dual extensions (.jpg and .jpeg) for the same beat do not double-count
     seen_stems = set()
     img_files = []
@@ -255,8 +260,16 @@ def audit_gk6_assets(project_root: str) -> Dict[str, Any]:
             details.append(
                 f"Part {part_idx:02d} has {cnt} keyframes, expected at least {target_per_part}"
             )
-            
-    passed_gk6 = has_all_audio and has_min_images and (len(deficient_parts) == 0) and (len(details) == 0)
+
+    # Cover Image check (Human-in-the-loop requirement)
+    has_cover = any(
+        ("beat_P01_B01" in os.path.basename(f)) or ("beat_P01_B1." in os.path.basename(f))
+        for f in img_files
+    )
+    if not has_cover:
+        details.append("Missing required manual Cover image: beat_P01_B01.* (Status cannot transition to Image without Cover)")
+
+    passed_gk6 = has_all_audio and has_min_images and (len(deficient_parts) == 0) and has_cover and (len(details) == 0)
     
     return {
         "passed_gk6": passed_gk6,
@@ -315,7 +328,8 @@ def audit_gk7_master(project_root: str, master_path: Optional[str] = None) -> Di
         duration_min = duration_sec / 60.0
 
         min_dur = getattr(config, "GK7_MIN_VIDEO_DURATION_MIN", 80.0)
-        passed_gk7 = (duration_min >= min_dur) and (size_bytes > 500 * 1024 * 1024)
+        max_dur = getattr(config, "GK7_MAX_VIDEO_DURATION_MIN", 95.0)
+        passed_gk7 = (min_dur <= duration_min <= max_dur) and (size_bytes > 500 * 1024 * 1024)
 
         return {
             "output_path": master_path,
@@ -335,32 +349,122 @@ def audit_gk7_master(project_root: str, master_path: Optional[str] = None) -> Di
         }
 
 
-def handle_image_generation_stage(project_root: str, image_mode: str) -> str:
+def check_cover_image_present(project_root: str) -> bool:
+    """Checks whether the manual Cover image (beat_P01_B01.*) exists in keyframes."""
+    keyframes_candidates = [
+        os.path.join(project_root, "02. Media Generation", "keyframes"),
+        os.path.join(project_root, "keyframes"),
+        os.path.join(project_root, "hsnooze.render", "keyframes"),
+    ]
+    for kf_dir in keyframes_candidates:
+        if os.path.isdir(kf_dir):
+            for ext in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"):
+                matches = glob.glob(os.path.join(kf_dir, f"beat_P01_B01{ext[1:]}")) + glob.glob(os.path.join(kf_dir, f"beat_P01_B1{ext[1:]}"))
+                if matches:
+                    return True
+    return False
+
+
+def handle_image_generation_stage(project_root: str, image_mode: str = "Automatic", current_status: str = "Voiceover") -> str:
     """
-    Handles Image generation branching based on Column I (Image_Mode):
-    - If Automatic: Triggers automated ImageFX bot reading combined_imageprompts.txt.
-    - If Manual: Pauses and instructs human to drop images into keyframes/ and manually change Status to 'Image'.
+    Handles Image generation branching and Human-in-the-Loop (HITL) gates:
+    - Status 'Voiceover':
+        If Automatic: Triggers automated image generation excluding Cover (P01_B01),
+                      then sets Status to 'JPEG'.
+        If Manual: Pauses and instructs human to upload keyframes.
+    - Status 'JPEG' (Human-in-the-Loop Pause):
+        Pauses and blocks rendering until human adds the custom Cover image (beat_P01_B01)
+        and manually promotes Status to 'Image'.
+    - Status 'Image':
+        Verifies Cover image exists and all 150-160 keyframes are ready.
+        Only then returns 'Image' to activate video rendering.
     """
-    keyframes_dir = os.path.join(project_root, "02. Media Generation", "keyframes")
-    img_files = (
-        glob.glob(os.path.join(keyframes_dir, "beat_*.jpg")) +
-        glob.glob(os.path.join(keyframes_dir, "beat_*.jpeg")) +
-        glob.glob(os.path.join(keyframes_dir, "beat_*.png"))
-    )
-    
-    if image_mode.lower() == "automatic":
-        print("[ORCHESTRATOR] Image_Mode is 'Automatic'. Initiating ImageFX 4K generation...")
-        return "Image"
-    else:
-        print("[ORCHESTRATOR] Image_Mode is 'Manual'.")
-        if len(img_files) >= config.EXPECTED_MIN_BEATS:
-            print(f"✅ Found {len(img_files)} keyframes uploaded manually. Proceeding to 'Image'.")
-            return "Image"
+    has_cover = check_cover_image_present(project_root)
+    status_clean = current_status.strip().capitalize()
+
+    if status_clean == "Voiceover":
+        if image_mode.lower() == "automatic":
+            print("[ORCHESTRATOR] Status is 'Voiceover'. Initiating automated image generation (excluding Cover)...")
+            print("[ORCHESTRATOR] Transitioning Status -> 'JPEG' awaiting human Cover insertion.")
+            return "JPEG"
         else:
-            print(f"⏸️ [MANUAL WAIT] Currently found {len(img_files)}/{config.EXPECTED_MIN_BEATS} keyframes in {keyframes_dir}.")
-            print("👉 Please open 'combined_imageprompts.txt', generate 4K images, and drop them into 'keyframes/'.")
-            print("👉 Once uploaded, change Status on Google Sheet from 'Voiceover' to 'Image' to resume.")
+            print("[ORCHESTRATOR] Image_Mode is 'Manual'. Awaiting human image upload.")
             return "Voiceover"
+
+    elif status_clean == "Jpeg":
+        if not has_cover:
+            print("=" * 60)
+            print("⏸️ [HUMAN-IN-THE-LOOP CHECKPOINT: STATUS = JPEG]")
+            print("👉 Automated keyframes are ready (Beats P01_B02 .. P15_B10).")
+            print("👉 Step blocked: Please design and add your Cover image ('beat_P01_B01.jpg/png') into keyframes/.")
+            print("👉 After placing the Cover image, manually change Status from 'JPEG' to 'Image' on the Dashboard Sheet to activate render.")
+            print("=" * 60)
+            return "JPEG"
+        else:
+            print("✅ Found manual Cover image 'beat_P01_B01'. Awaiting human to switch Status on Google Sheet to 'Image' to authorize render.")
+            return "JPEG"
+
+    elif status_clean == "Image":
+        if not has_cover:
+            raise ValueError(
+                "Cannot render: Status is 'Image' but manual Cover image 'beat_P01_B01' is missing from keyframes! "
+                "Please add Cover image before rendering."
+            )
+        print("✅ Status is 'Image' and manual Cover image verified. Authorizing 4K Video Render Pipeline.")
+        return "Image"
+
+    return status_clean
+
+
+def link_or_copy_artifact(source_path: str, target_dir: str) -> str:
+    """
+    Creates a lightweight symlink pointing to the canonical single-source artifact.
+    Falls back to file copy only if symlinks are unsupported by the host filesystem.
+    Validates source_path existence and prevents directory wiping on invalid filenames.
+    """
+    if not source_path or not str(source_path).strip():
+        raise ValueError("source_path cannot be empty or whitespace")
+
+    src_abs = os.path.abspath(str(source_path))
+    if not os.path.exists(src_abs):
+        raise FileNotFoundError(f"Source artifact does not exist: {source_path}")
+
+    base_name = os.path.basename(os.path.normpath(src_abs))
+    if not base_name:
+        raise ValueError(f"Invalid source artifact filename: '{source_path}'")
+
+    if not target_dir or not str(target_dir).strip():
+        raise ValueError("target_dir cannot be empty or whitespace")
+
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, base_name)
+    tgt_abs = os.path.abspath(target_path)
+    if src_abs == tgt_abs:
+        return target_path
+
+    if os.path.lexists(target_path):
+        try:
+            if os.path.islink(target_path) and os.path.realpath(target_path) == os.path.realpath(src_abs):
+                return target_path
+            if os.path.isdir(target_path) and not os.path.islink(target_path):
+                import shutil
+                shutil.rmtree(target_path)
+            else:
+                os.remove(target_path)
+        except OSError:
+            pass
+
+    try:
+        os.symlink(src_abs, target_path)
+    except OSError:
+        if os.path.lexists(target_path):
+            try:
+                os.remove(target_path)
+            except OSError:
+                pass
+        import shutil
+        shutil.copy2(src_abs, target_path)
+    return target_path
 
 
 def run_project_assembly(project_root: str, image_mode: str = "Automatic", max_workers: int = 8) -> Dict[str, Any]:
@@ -436,17 +540,12 @@ def run_project_assembly(project_root: str, image_mode: str = "Automatic", max_w
         )
         chunk_paths.append(chunk_mp4)
         
-        # Mirror chunk to chunks_dir and hsnooze.render/output/
-        chunk_name = os.path.basename(chunk_mp4)
+        # Link canonical chunk to chunks_dir and hsnooze.render/output/
         for target_dir in [chunks_dir, render_output_dir]:
-            target_path = os.path.join(target_dir, chunk_name)
-            if os.path.abspath(target_path) != os.path.abspath(chunk_mp4):
-                if not os.path.exists(target_path) or os.path.getsize(target_path) != os.path.getsize(chunk_mp4):
-                    try:
-                        import shutil
-                        shutil.copy2(chunk_mp4, target_path)
-                    except Exception as e:
-                        print(f"Warning: Failed to mirror {chunk_name} to {target_dir}: {e}")
+            try:
+                link_or_copy_artifact(chunk_mp4, target_dir)
+            except Exception as e:
+                print(f"Warning: Failed to link/mirror {os.path.basename(chunk_mp4)} to {target_dir}: {e}")
         
     # 3. Master Assembly
     final_dir = os.path.join(project_root, "03. Final Production")
@@ -458,16 +557,12 @@ def run_project_assembly(project_root: str, image_mode: str = "Automatic", max_w
         temp_dir=temp_dir
     )
     
-    # Mirror master video to video_dir and render_output_dir
+    # Link canonical master video to video_dir and render_output_dir
     for target_dir in [video_dir, render_output_dir]:
-        target_path = os.path.join(target_dir, "master_final_90min.mp4")
-        if os.path.abspath(target_path) != os.path.abspath(master_mp4):
-            if not os.path.exists(target_path) or os.path.getsize(target_path) != os.path.getsize(master_mp4):
-                try:
-                    import shutil
-                    shutil.copy2(master_mp4, target_path)
-                except Exception as e:
-                    print(f"Warning: Failed to mirror master_final_90min.mp4 to {target_dir}: {e}")
+        try:
+            link_or_copy_artifact(master_mp4, target_dir)
+        except Exception as e:
+            print(f"Warning: Failed to link/mirror master_final_90min.mp4 to {target_dir}: {e}")
     
     print(f"==================================================")
     print(f"🎉 Pipeline Execution Complete! Status -> READY")

@@ -13,9 +13,11 @@ import argparse
 from pathlib import Path
 from typing import List, Dict, Any
 
-from master_assembler import assemble_master_video
+from master_assembler import assemble_master_video, audit_master_video_gk7
 from chunk_renderer import is_chunk_valid
 import config
+
+SILENCE_GAP_SEC = getattr(config, "INTER_PART_SILENCE_SEC", 5.0)
 
 
 def find_part_chunks(chunks_dir: str, expected_parts: int = 15) -> List[str]:
