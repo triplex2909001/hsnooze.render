@@ -1,220 +1,56 @@
 """
 HistorySnooze Director - Chunk Part Renderer
 Renders individual 5-6 minute part chunks (chunk_part_01.mp4 ... chunk_part_15.mp4).
-Includes Smart Delta Restart logic, "Dim the Lights" Part 01 audio cue detection,
-parameter forwarding into render_kenburns_beat, and multi-environment stardust resolution.
+Rule <= 150 lines compliant facade.
 """
 
-import glob
-import json
 import logging
 import os
-import sys
 import subprocess
-from typing import List, Dict, Optional
-from kenburns_asmr import render_kenburns_beat
-from beat_aligner import align_part_beats
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional
 
-try:
-    import config
-except ImportError:
-    config = None
+_DIR = str(Path(__file__).resolve().parent)
+if _DIR not in sys.path:
+    sys.path.insert(0, _DIR)
+
+from beat_aligner import align_part_beats
+from kenburns_asmr import render_kenburns_beat
+from chunk_resource_manager import get_available_ram_gb, get_safe_max_workers
+from chunk_asset_resolver import (
+    DEFAULT_P01_CUE_START_SEC,
+    DEFAULT_P01_CUE_END_SEC,
+    resolve_stardust_asset_path,
+    resolve_part01_cue_timestamps
+)
+from chunk_cleaner import cleanup_chunk_intermediates
 
 logger = logging.getLogger("hsnooze.render.chunk_renderer")
-
-MIN_VALID_CHUNK_BYTES = 10 * 1024 * 1024  # 10 MB minimum for 4K video
-
-DEFAULT_P01_CUE_START_SEC = getattr(config, "DEFAULT_P01_CUE_START_SEC", 174.73) if config else 174.73
-DEFAULT_P01_CUE_END_SEC = getattr(config, "DEFAULT_P01_CUE_END_SEC", 184.45) if config else 184.45
+MIN_VALID_CHUNK_BYTES = 10 * 1024 * 1024
 
 
 def is_chunk_valid(chunk_path: str) -> bool:
-    """
-    Checks if a chunk MP4 exists, is greater than 10MB, and has valid playable streams.
-    """
-    if not os.path.exists(chunk_path):
+    """Checks if a chunk MP4 exists, is > 10MB, and duration > 60s."""
+    if not os.path.exists(chunk_path) or os.path.getsize(chunk_path) < MIN_VALID_CHUNK_BYTES:
         return False
-    if os.path.getsize(chunk_path) < MIN_VALID_CHUNK_BYTES:
-        return False
-
     try:
         cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            chunk_path
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", chunk_path
         ]
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        dur = float(res.stdout.strip())
-        return dur > 60.0  # Must be at least 1 minute long
+        return float(res.stdout.strip()) > 60.0
     except Exception:
         return False
 
 
-def resolve_stardust_asset_path(custom_path: Optional[str] = None) -> Optional[str]:
-    """
-    Resolves the absolute path to ambient_stardust_loop.mp4 across repository, local, and Colab paths.
-    Returns the path if the asset exists, otherwise returns None (triggering graceful fallback).
-    """
-    def _is_valid(p: Optional[str]) -> bool:
-        return bool(p and os.path.isfile(p) and os.access(p, os.R_OK) and os.path.getsize(p) > 0)
-
-    if custom_path is not None:
-        return os.path.abspath(custom_path) if _is_valid(custom_path) else None
-
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(base_dir)
-
-    candidates = [
-        custom_path,
-        os.path.join(os.getcwd(), "assets", "ambient_stardust_loop.mp4"),
-        os.path.join(base_dir, "assets", "ambient_stardust_loop.mp4"),
-        os.path.join(project_root, "assets", "ambient_stardust_loop.mp4"),
-        "/content/assets/ambient_stardust_loop.mp4",
-        "/content/drive/MyDrive/assets/ambient_stardust_loop.mp4"
-    ]
-
-    for cand in candidates:
-        if cand and _is_valid(cand):
-            return os.path.abspath(cand)
-
-    return None
-
-
-def resolve_part01_cue_timestamps(
-    audio_wav_path: str,
-    custom_cue_path: Optional[str] = None
-) -> Dict[str, float]:
-    """
-    Retrieves cue_start_sec and cue_end_sec for Part 01.
-    Checks custom_cue_path, then adjacent Part_01_cues.json, with deterministic fallback.
-    """
-    cue_file = custom_cue_path
-    if not cue_file or not os.path.exists(cue_file):
-        audio_dir = os.path.dirname(os.path.abspath(audio_wav_path))
-        candidates = [
-            os.path.join(audio_dir, "Part_01_cues.json"),
-            os.path.join(audio_dir, "cues.json"),
-            os.path.join(os.path.dirname(audio_dir), "audio", "Part_01_cues.json"),
-            os.path.join("02. Media Generation", "audio", "Part_01_cues.json")
-        ]
-        for c in candidates:
-            if os.path.exists(c):
-                cue_file = c
-                break
-
-    if cue_file and os.path.exists(cue_file):
-        try:
-            with open(cue_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return {
-                    "cue_start_sec": float(data.get("cue_start_sec", DEFAULT_P01_CUE_START_SEC)),
-                    "cue_end_sec": float(data.get("cue_end_sec", DEFAULT_P01_CUE_END_SEC))
-                }
-        except Exception as e:
-            logger.warning(f"Failed reading cue manifest '{cue_file}': {e}. Using default timestamps.")
-
-    # Deterministic fallback timestamps
-    return {
-        "cue_start_sec": DEFAULT_P01_CUE_START_SEC,
-        "cue_end_sec": DEFAULT_P01_CUE_END_SEC
-    }
-
-
-def get_available_ram_gb() -> float:
-    """
-    Returns available system RAM in gigabytes across Linux, macOS, and environments with or without psutil.
-    """
-    try:
-        import psutil
-        return psutil.virtual_memory().available / (1024 ** 3)
-    except ImportError:
-        pass
-
-    # Linux /proc/meminfo
-    if os.path.exists("/proc/meminfo"):
-        try:
-            mem_info = {}
-            with open("/proc/meminfo", "r") as f:
-                for line in f:
-                    parts = line.split(":")
-                    if len(parts) == 2:
-                        mem_info[parts[0].strip()] = int(parts[1].split()[0])
-            if "MemAvailable" in mem_info:
-                return mem_info["MemAvailable"] / (1024 * 1024)
-            if "MemFree" in mem_info:
-                return (mem_info["MemFree"] + mem_info.get("Buffers", 0) + mem_info.get("Cached", 0)) / (1024 * 1024)
-            if "MemTotal" in mem_info:
-                return (mem_info["MemTotal"] / (1024 * 1024)) * 0.7
-        except Exception:
-            pass
-
-    # macOS sysctl
-    if sys.platform == "darwin":
-        try:
-            res = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, check=True)
-            total_bytes = int(res.stdout.strip())
-            return (total_bytes / (1024 ** 3)) * 0.6
-        except Exception:
-            pass
-
-    return 8.0  # Conservative default fallback
-
-
-def get_safe_max_workers(
-    requested_workers: int = 1,
-    force_cpu: bool = False,
-    ram_gb: Optional[float] = None
-) -> int:
-    """
-    Clamps maximum worker concurrency based on available system RAM (minimum 3.5 GB per worker)
-    and hardware NVENC limits (maximum 2 NVENC sessions concurrently).
-    """
-    from kenburns_asmr import check_nvenc_available
-
-    try:
-        requested_workers = int(requested_workers)
-    except (ValueError, TypeError):
-        requested_workers = 1
-
-    if requested_workers < 1:
-        requested_workers = 1
-
-    avail_ram_gb = ram_gb if ram_gb is not None else get_available_ram_gb()
-    # Minimum 3.5 GB RAM required per concurrent 4K render worker
-    ram_workers = max(1, int(avail_ram_gb // 3.5))
-
-    has_nvenc = (not force_cpu) and check_nvenc_available()
-    if has_nvenc:
-        # Hardware NVENC session limits: strictly clamp to maximum 2 concurrent streams
-        max_allowed = min(requested_workers, 2, ram_workers)
-    else:
-        cpu_count = os.cpu_count() or 2
-        cpu_workers = max(1, cpu_count - 1 if cpu_count > 2 else cpu_count)
-        max_allowed = min(requested_workers, ram_workers, cpu_workers)
-
-    return max(1, max_allowed)
-
-
 def render_part_chunk(
-    part_index: int,
-    audio_wav_path: str,
-    beat_images: List[str],
-    output_dir: str,
-    temp_dir: str,
-    cues_json_path: Optional[str] = None,
-    overlay_asset_path: Optional[str] = None,
-    force_cpu: bool = False,
-    max_workers: int = 1
+    part_index: int, audio_wav_path: str, beat_images: List[str],
+    output_dir: str, temp_dir: str, cues_json_path: Optional[str] = None,
+    overlay_asset_path: Optional[str] = None, force_cpu: bool = False, max_workers: int = 1
 ) -> str:
-    """
-    Renders an individual part into a standalone MP4 chunk:
-    1. Check Smart Delta Restart: skip if already valid.
-    2. Extract audio cues for Part 01 ("dim the lights").
-    3. Align visual beats with voiceover audio.
-    4. Render Ken Burns ASMR video for each beat with sleep shading & particle overlay.
-    5. Stream-copy concatenate beat clips and mux audio track into chunk_part_XX.mp4.
-    """
+    """Renders an individual part into a standalone MP4 chunk."""
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
     if not temp_dir:
@@ -222,160 +58,64 @@ def render_part_chunk(
         temp_dir = tempfile.mkdtemp(prefix=f"hsnooze_chunk_P{part_index:02d}_")
     os.makedirs(temp_dir, exist_ok=True)
 
-    # Concurrency and memory safeguards: clamp requested workers by RAM and NVENC session limits
-    safe_workers = get_safe_max_workers(requested_workers=max_workers, force_cpu=force_cpu)
-    if safe_workers != max_workers:
-        logger.info(
-            f"[RESOURCE] Clamped workers from {max_workers} to {safe_workers} "
-            f"(bounded by RAM: min 3.5GB/worker, NVENC limit: max 2 sessions)."
-        )
-    max_workers = safe_workers
+    max_workers = get_safe_max_workers(requested_workers=max_workers, force_cpu=force_cpu)
+    chunk_path = os.path.join(output_dir, f"chunk_part_{part_index:02d}.mp4")
 
-    chunk_filename = f"chunk_part_{part_index:02d}.mp4"
-    chunk_path = os.path.join(output_dir, chunk_filename)
-
-    # 1. Smart Delta Restart Check
     if is_chunk_valid(chunk_path):
-        logger.info(f"[SMART DELTA RESTART] Part {part_index:02d} is already rendered and valid. Skipping.")
+        logger.info(f"[SMART DELTA RESTART] Part {part_index:02d} already rendered. Skipping.")
         return chunk_path
 
-    logger.info(f"[RENDER] Beginning render for Part {part_index:02d} ({len(beat_images)} beats)...")
-
-    # 2. Extract Cues for Part 01
-    dim_start_sec = 0.0
-    dim_end_sec = 0.0
-    p01_b1_duration = None
-
+    dim_start_sec, dim_end_sec, p01_b1_duration = 0.0, 0.0, None
     if part_index == 1:
         cues = resolve_part01_cue_timestamps(audio_wav_path, cues_json_path)
-        dim_start_sec = cues["cue_start_sec"]
-        dim_end_sec = cues["cue_end_sec"]
+        dim_start_sec, dim_end_sec = cues["cue_start_sec"], cues["cue_end_sec"]
         p01_b1_duration = round(dim_end_sec + 2.0, 3)
-        logger.info(
-            f"[CUE] Part 01 'dim the lights' anchored: {dim_start_sec:.2f}s -> {dim_end_sec:.2f}s "
-            f"(Beat 1 dur: {p01_b1_duration:.2f}s)"
-        )
 
-    # 3. Align Beats
     alignment = align_part_beats(
-        part_index=part_index,
-        audio_wav_path=audio_wav_path,
-        beat_images=beat_images,
-        dim_start_sec=dim_start_sec,
-        dim_end_sec=dim_end_sec,
-        p01_b01_duration=p01_b1_duration
+        part_index=part_index, audio_wav_path=audio_wav_path, beat_images=beat_images,
+        dim_start_sec=dim_start_sec, dim_end_sec=dim_end_sec, p01_b01_duration=p01_b1_duration
     )
     beats = alignment["beats"]
-
-    # 4. Render Ken Burns ASMR Visual Beats
     stardust_path = resolve_stardust_asset_path(overlay_asset_path)
-    if stardust_path:
-        logger.info(f"[RENDER] Ambient stardust overlay: {stardust_path}")
-    else:
-        logger.info("[RENDER] Stardust overlay not found. Color grading will run without overlay.")
 
     beat_clips = []
-    expected_beat_clips = [
-        os.path.join(temp_dir, f"beat_P{part_index:02d}_B{idx:02d}.mp4")
-        for idx in range(1, len(beats) + 1)
-    ]
-    concat_list_path = os.path.join(temp_dir, f"part_{part_index:02d}_concat.txt")
-    temp_video_only = os.path.join(temp_dir, f"part_{part_index:02d}_video.mp4")
-    temp_chunk_path = f"{chunk_path}.tmp.mp4"
+    expected_clips = [os.path.join(temp_dir, f"beat_P{part_index:02d}_B{i:02d}.mp4") for i in range(1, len(beats) + 1)]
+    concat_list = os.path.join(temp_dir, f"part_{part_index:02d}_concat.txt")
+    temp_vid = os.path.join(temp_dir, f"part_{part_index:02d}_video.mp4")
+    temp_chunk = f"{chunk_path}.tmp.mp4"
     success = False
 
     try:
-        def _render_beat_worker(beat_tuple):
-            idx, beat = beat_tuple
-            beat_clip_path = os.path.join(temp_dir, f"beat_P{part_index:02d}_B{idx:02d}.mp4")
-            zoom_in = (idx % 2 != 0)  # Alternate zoom in and zoom out
-            if not os.path.exists(beat_clip_path) or os.path.getsize(beat_clip_path) < 1024 * 1024:
+        def _worker(item):
+            idx, beat = item
+            clip = os.path.join(temp_dir, f"beat_P{part_index:02d}_B{idx:02d}.mp4")
+            if not os.path.exists(clip) or os.path.getsize(clip) < 1024 * 1024:
                 render_kenburns_beat(
-                    image_path=beat["image_path"],
-                    duration=beat["duration"],
-                    output_clip_path=beat_clip_path,
-                    zoom_in=zoom_in,
-                    is_transition_beat=beat.get("is_transition_beat", False),
-                    dim_start_sec=beat.get("dim_start_sec", 0.0),
-                    dim_end_sec=beat.get("dim_end_sec", 0.0),
-                    sleep_mode=beat.get("sleep_mode", False),
-                    overlay_asset_path=stardust_path,
-                    force_cpu=force_cpu
+                    image_path=beat["image_path"], duration=beat["duration"], output_clip_path=clip,
+                    zoom_in=(idx % 2 != 0), is_transition_beat=beat.get("is_transition_beat", False),
+                    dim_start_sec=beat.get("dim_start_sec", 0.0), dim_end_sec=beat.get("dim_end_sec", 0.0),
+                    sleep_mode=beat.get("sleep_mode", False), overlay_asset_path=stardust_path, force_cpu=force_cpu
                 )
-            return idx, beat_clip_path
+            return idx, clip
 
         if max_workers > 1 and len(beats) > 1:
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                rendered = list(executor.map(_render_beat_worker, enumerate(beats, start=1)))
+                rendered = list(executor.map(_worker, enumerate(beats, start=1)))
         else:
-            rendered = [_render_beat_worker(b) for b in enumerate(beats, start=1)]
+            rendered = [_worker(b) for b in enumerate(beats, start=1)]
 
         rendered.sort(key=lambda x: x[0])
         beat_clips = [path for _, path in rendered]
 
-        with open(concat_list_path, "w", encoding="utf-8") as f_concat:
+        with open(concat_list, "w", encoding="utf-8") as f_c:
             for path in beat_clips:
-                f_concat.write(f"file '{os.path.abspath(path)}'\n")
+                f_c.write(f"file '{os.path.abspath(path)}'\n")
 
-        # 5. Assemble Visual Beats + Audio into Part Chunk
-        cmd_video = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-f", "concat", "-safe", "0",
-            "-i", concat_list_path,
-            "-c", "copy",
-            temp_video_only
-        ]
-        subprocess.run(cmd_video, check=True)
-
-        # Mux video with audio WAV
-        cmd_mux = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-i", temp_video_only,
-            "-i", audio_wav_path,
-            "-c:v", "copy",
-            "-c:a", "aac", "-b:a", "256k",
-            "-shortest",
-            chunk_path
-        ]
-        subprocess.run(cmd_mux, check=True)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", concat_list, "-c", "copy", temp_vid], check=True)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", temp_vid, "-i", audio_wav_path, "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest", chunk_path], check=True)
         success = True
-
     finally:
-        # Guaranteed cleanup of intermediate beat clips, concat manifest, and intermediate video upon success or abort
-        all_intermediate_clips = set(
-            beat_clips
-            + expected_beat_clips
-            + glob.glob(os.path.join(temp_dir, f"beat_P{part_index:02d}_B*.*"))
-        )
-        for clip_path in all_intermediate_clips:
-            if os.path.lexists(clip_path):
-                try:
-                    os.remove(clip_path)
-                except OSError as e:
-                    logger.warning(f"Could not remove intermediate beat clip {clip_path}: {e}")
-        if os.path.lexists(concat_list_path):
-            try:
-                os.remove(concat_list_path)
-            except OSError as e:
-                logger.warning(f"Could not remove concat manifest {concat_list_path}: {e}")
-        if os.path.lexists(temp_video_only):
-            try:
-                os.remove(temp_video_only)
-            except OSError as e:
-                logger.warning(f"Could not remove intermediate video {temp_video_only}: {e}")
+        cleanup_chunk_intermediates(temp_dir, part_index, beat_clips, expected_clips, concat_list, temp_vid, temp_chunk, chunk_path, success)
 
-        # Purge partial temporary or aborted chunk files
-        if os.path.lexists(temp_chunk_path):
-            try:
-                os.remove(temp_chunk_path)
-            except OSError:
-                pass
-        if not success and os.path.lexists(chunk_path):
-            try:
-                os.remove(chunk_path)
-            except OSError:
-                pass
-
-    logger.info(f"✅ Finished Part {part_index:02d} Chunk: {chunk_path}")
     return chunk_path

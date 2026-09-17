@@ -1,19 +1,23 @@
 """
 HistorySnooze Director - Audio Cue Extraction Utility
 Extracts deterministic cue timestamps for Part 01 'Dim the Lights' transition.
-Supports 3-tier hierarchy:
-  Tier 1: Direct measurement from raw sentence chunk WAVs.
-  Tier 2: PCM digital zero-silence scanning of stitched Part_01.wav.
-  Tier 3: Verified deterministic fallback constants.
+Supports 3-tier hierarchy (Tier 1: Chunks, Tier 2: Silence scan, Tier 3: Constants).
+Rule <= 150 lines compliant facade.
 """
 
 import json
 import os
 import re
-import struct
+import sys
 import wave
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+_DIR = str(Path(__file__).resolve().parent)
+if _DIR not in sys.path:
+    sys.path.insert(0, _DIR)
+
+from cue_silence_scanner import scan_wav_silence_intervals
 
 # Verified deterministic fallback constants for Matsuo Basho
 DEFAULT_CUE_START_SEC = 174.73
@@ -28,10 +32,7 @@ DEFAULT_CUE_TEXT = (
 
 
 def validate_cue_manifest(cue_data: Dict[str, Any]) -> bool:
-    """
-    Validates that a cue manifest dictionary adheres strictly to schema invariants.
-    Raises ValueError on invalid fields or schema violations.
-    """
+    """Validates that a cue manifest dictionary adheres strictly to schema invariants."""
     if cue_data.get("part_index") != 1:
         raise ValueError("Cue anchoring is only valid on Part 01.")
     cue_text = cue_data.get("cue_text") or cue_data.get("cue_verbatim_text") or ""
@@ -49,7 +50,7 @@ def validate_cue_manifest(cue_data: Dict[str, Any]) -> bool:
     return True
 
 
-def _save_cues_json(data: Dict[str, Any], path: str):
+def _save_cues_json(data: Dict[str, Any], path: str) -> None:
     abs_path = os.path.abspath(path)
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
     with open(abs_path, "w", encoding="utf-8") as f:
@@ -65,12 +66,7 @@ def extract_part01_cue_timestamps(
     intra_silence_sec: float = 1.0,
     buffer_sec: float = DEFAULT_BUFFER_SEC
 ) -> Dict[str, Any]:
-    """
-    Extracts start and end timestamps for the 'dim the lights' cue in Part 01.
-    Tier 1: Scans chunks_dir for part_01_chunk_*.wav (measures up to chunk 17).
-    Tier 2: Scans stitched part_01_wav_path for PCM zero-silence intervals >= 0.8s.
-    Tier 3: Deterministic fallback constants (174.73s -> 184.45s).
-    """
+    """Extracts start and end timestamps for the 'dim the lights' cue in Part 01."""
     result: Dict[str, Any] = {
         "part_index": 1,
         "cue_phrase": "dim the lights",
@@ -92,16 +88,12 @@ def extract_part01_cue_timestamps(
         chunk_files = sorted(Path(chunks_dir).glob("part_01_chunk_*.wav"))
         if len(chunk_files) >= 17:
             try:
-                acc_time = 0.0
-                c_start = 0.0
-                c_end = 0.0
-                c_dur = 0.0
+                acc_time, c_start, c_end, c_dur = 0.0, 0.0, 0.0, 0.0
                 for idx, c_path in enumerate(chunk_files, start=1):
                     with wave.open(str(c_path), "rb") as wf:
                         dur = wf.getnframes() / float(wf.getframerate())
                     if idx == 17:
-                        c_start = acc_time
-                        c_dur = dur
+                        c_start, c_dur = acc_time, dur
                         c_end = c_start + dur
                         break
                     acc_time += dur + intra_silence_sec
@@ -122,70 +114,20 @@ def extract_part01_cue_timestamps(
 
     # Tier 2: Scan stitched Part_01.wav for silence intervals
     if part_01_wav_path and os.path.exists(part_01_wav_path):
-        try:
-            with wave.open(part_01_wav_path, "rb") as wf:
-                framerate = wf.getframerate()
-                n_frames = wf.getnframes()
-                n_channels = wf.getnchannels()
-                sampwidth = wf.getsampwidth()
-
-                zero_threshold = int(framerate * (intra_silence_sec * 0.8))
-                current_zero_count = 0
-                zero_intervals = []
-                frame_offset = 0
-                chunk_size = framerate  # Stream in 1-second chunks to bound RAM to < 1 MB
-
-                while frame_offset < n_frames:
-                    frames_to_read = min(chunk_size, n_frames - frame_offset)
-                    raw = wf.readframes(frames_to_read)
-                    if not raw:
-                        break
-
-                    try:
-                        import numpy as np
-                        chunk_samples = np.frombuffer(raw, dtype=np.int16)
-                        if n_channels > 1:
-                            chunk_samples = chunk_samples.reshape(-1, n_channels)[:, 0]
-                        is_silence = (np.abs(chunk_samples) <= 100)
-                    except Exception:
-                        num_samps = len(raw) // (sampwidth or 2)
-                        chunk_samples = struct.unpack(f"<{num_samps}h", raw)
-                        if n_channels > 1:
-                            chunk_samples = chunk_samples[::n_channels]
-                        is_silence = [abs(s) <= 100 for s in chunk_samples]
-
-                    for s_silence in is_silence:
-                        if s_silence:
-                            current_zero_count += 1
-                        else:
-                            if current_zero_count >= zero_threshold:
-                                start_s = (frame_offset - current_zero_count) / framerate
-                                end_s = frame_offset / framerate
-                                zero_intervals.append((start_s, end_s))
-                            current_zero_count = 0
-                        frame_offset += 1
-
-                if current_zero_count >= zero_threshold:
-                    start_s = (frame_offset - current_zero_count) / framerate
-                    end_s = frame_offset / framerate
-                    zero_intervals.append((start_s, end_s))
-
-            # Chunk 17 lies between silence 16 (end) and silence 17 (start)
-            if len(zero_intervals) >= 17:
-                c_start = zero_intervals[15][1]
-                c_end = zero_intervals[16][0]
-                result.update({
-                    "cue_start_sec": round(c_start, 3),
-                    "cue_end_sec": round(c_end, 3),
-                    "dim_duration_sec": round(c_end - c_start, 3),
-                    "recommended_b01_duration_sec": round(c_end + buffer_sec, 3),
-                    "extraction_method": "zero_silence_scan"
-                })
-                if output_json_path:
-                    _save_cues_json(result, output_json_path)
-                return result
-        except Exception:
-            pass
+        zero_intervals = scan_wav_silence_intervals(part_01_wav_path, intra_silence_sec)
+        if len(zero_intervals) >= 17:
+            c_start = zero_intervals[15][1]
+            c_end = zero_intervals[16][0]
+            result.update({
+                "cue_start_sec": round(c_start, 3),
+                "cue_end_sec": round(c_end, 3),
+                "dim_duration_sec": round(c_end - c_start, 3),
+                "recommended_b01_duration_sec": round(c_end + buffer_sec, 3),
+                "extraction_method": "zero_silence_scan"
+            })
+            if output_json_path:
+                _save_cues_json(result, output_json_path)
+            return result
 
     # Tier 3: Deterministic fallback
     if output_json_path:
