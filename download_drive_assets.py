@@ -27,7 +27,7 @@ KEYFRAMES_RELEASE_URL = (
 KNOWN_SUBFOLDERS = {
     "1TILhfJstpKX3stnzIzBk6A8ZZKqc7wtc": {
         "audio": "1LernpBWI1DlePFLQiVqTTSGYA9435NjK",
-        "keyframes": "19krkuGIJ8l1eyASLIhKyi1oQS9f5cjmm",
+        "keyframes": "19krkuGIJ8l1eyASLIhKyi1oQS9f5cjmm",  # gitleaks:allow
         "combined": "1LQQtIcqoMPHqo7Pmpr_zirgCg723SnnY",
     }
 }

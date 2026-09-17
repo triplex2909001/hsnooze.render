@@ -14,7 +14,7 @@ def create_5s_silence_clip(output_path: str, width: int = 3840, height: int = 21
     """
     if os.path.exists(output_path) and os.path.getsize(output_path) > 1024 * 100:
         return output_path
-        
+
     out_dir = os.path.dirname(output_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
