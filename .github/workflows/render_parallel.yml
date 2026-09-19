@@ -18,6 +18,11 @@ on:
         required: false
         default: 'v-assets-basho'
         type: string
+      target_parts:
+        description: 'Specific part(s) to render (e.g. "1" or "1,3" or "all")'
+        required: false
+        default: 'all'
+        type: string
 
 jobs:
   # ============================================================================
@@ -35,25 +40,52 @@ jobs:
         part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
     steps:
+      - name: Check Target Part Filter
+        id: filter
+        run: |
+          TARGET="${{ inputs.target_parts }}"
+          if [ -n "$TARGET" ] && [ "$TARGET" != "all" ]; then
+            IFS=',' read -ra ADDR <<< "$TARGET"
+            MATCH=false
+            for p in "${ADDR[@]}"; do
+              trimmed=$(echo "$p" | tr -d ' ')
+              if [ "$trimmed" = "${{ matrix.part }}" ]; then
+                MATCH=true
+                break
+              fi
+            done
+            if [ "$MATCH" = "false" ]; then
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "Skipping Part ${{ matrix.part }} as target is $TARGET"
+              exit 0
+            fi
+          fi
+          echo "skip=false" >> $GITHUB_OUTPUT
+
       - name: Checkout Code
+        if: steps.filter.outputs.skip != 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python 3.10
+        if: steps.filter.outputs.skip != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install FFmpeg 4K
+        if: steps.filter.outputs.skip != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg libx264-dev libmp3lame-dev
 
       - name: Install Dependencies
+        if: steps.filter.outputs.skip != 'true'
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Render Part ${{ matrix.part }} (Ken Burns ASMR + Dim-the-Lights)
+        if: steps.filter.outputs.skip != 'true'
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           PROJECT_FOLDER_ID: ${{ inputs.project_folder_id }}
@@ -61,6 +93,7 @@ jobs:
           python3 render_single_part.py "./project_assets" ${{ matrix.part }} 4 --cpu
 
       - name: Upload Chunk Artifact (Part ${{ matrix.part }})
+        if: steps.filter.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: chunk-part-${{ matrix.part }}
