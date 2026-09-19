@@ -110,9 +110,8 @@ def build_filter_graph(
                 f"[kb] split=2 [kb_norm][kb_for_dark]; "
                 f"[kb_for_dark] {grade_filter} [kb_dark]; "
                 f"[kb_norm][kb_dark] blend=all_expr='{cosine_blend}',format=rgba [kb_dimmed]; "
-                f"[1:v] scale={width}:{height},format=rgba,colorchannelmixer=aa={stardust_opacity:.2f} [pts_alpha]; "
-                f"[kb_dimmed][pts_alpha] blend=all_mode=screen:all_opacity="
-                f"'if(lte(T,{t0:.3f}),0.0,if(gte(T,{t1:.3f}),1.0,0.5*(1-cos(PI*(T-{t0:.3f})/{delta:.3f}))))' [out]"
+                f"[1:v] scale={width}:{height},format=rgba,colorchannelmixer=aa={stardust_opacity:.2f},fade=t=in:st={t0:.3f}:d={delta:.3f}:alpha=1 [pts_alpha]; "
+                f"[kb_dimmed][pts_alpha] blend=all_mode=screen [out]"
             )
             return filter_complex, "[out]"
         else:
