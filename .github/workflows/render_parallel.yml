@@ -54,6 +54,9 @@ jobs:
           pip install -r requirements.txt
 
       - name: Render Part ${{ matrix.part }} (Ken Burns ASMR + Dim-the-Lights)
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          PROJECT_FOLDER_ID: ${{ inputs.project_folder_id }}
         run: |
           python3 render_single_part.py "./project_assets" ${{ matrix.part }} 4
 

@@ -19,16 +19,21 @@ if str(_CUR_DIR) not in sys.path:
 from drive_extractor import SecurityError, safe_extract_tarball
 from network_retry import retry_network_op
 
-KEYFRAMES_RELEASE_URL = (
-    "https://github.com/triplex2909001/hsnooze.render/releases/download/"
-    "v-assets-basho/keyframes_bundle.tar.gz"
-)
+def get_keyframe_cdn_url() -> str:
+    tag = os.environ.get("RELEASE_TAG", "v-assets-basho").strip()
+    repo = os.environ.get("GITHUB_REPOSITORY", "triplex2909001/hsnooze.render").strip()
+    return f"https://github.com/{repo}/releases/download/{tag}/keyframes_bundle.tar.gz"
 
 KNOWN_SUBFOLDERS = {
     "1TILhfJstpKX3stnzIzBk6A8ZZKqc7wtc": {
         "audio": "1LernpBWI1DlePFLQiVqTTSGYA9435NjK",
         "keyframes": "19krkuGIJ8l1eyASLIhKyi1oQS9f5cjmm",  # gitleaks:allow
         "combined": "1LQQtIcqoMPHqo7Pmpr_zirgCg723SnnY",
+    },
+    "1h6DO5D2zZzwFo4mbnWY9z9SZ8WvL2WZV": {
+        "audio": "1cgfDXuj8cfzzdgMWYCZErHol5vfVbSz1",
+        "keyframes": "1pfNlIDC_Qhi0gZbLTGJhNlxkCmvzNj27",
+        "combined": "12P5vvUIDUKq0DEUlLBvKJflgvJxGXM87",
     }
 }
 
@@ -38,7 +43,7 @@ def fetch_keyframe_bundle_cdn(bundle_tar: Path, keyframes_dir: Path) -> bool:
     """Downloads keyframe bundle tarball from GitHub CDN with automatic retry."""
     if not bundle_tar.exists() or bundle_tar.stat().st_size == 0:
         tmp_tar = bundle_tar.with_suffix(".tar.tmp")
-        req = urllib.request.Request(KEYFRAMES_RELEASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(get_keyframe_cdn_url(), headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_tar, "wb") as f_out:
             shutil.copyfileobj(resp, f_out)
         tmp_tar.replace(bundle_tar)

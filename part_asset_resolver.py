@@ -21,8 +21,13 @@ try:
 except ImportError:
     config = None
 
-KEYFRAMES_RELEASE_URL = "https://github.com/triplex2909001/hsnooze.render/releases/download/v-assets-basho/keyframes_bundle.tar.gz"
-AUDIO_RELEASE_URL = "https://github.com/triplex2909001/hsnooze.render/releases/download/v-assets-basho/audio_bundle.tar.gz"
+def get_release_urls() -> Tuple[str, str]:
+    tag = os.environ.get("RELEASE_TAG", "v-assets-basho").strip()
+    repo = os.environ.get("GITHUB_REPOSITORY", "triplex2909001/hsnooze.render").strip()
+    kf_url = f"https://github.com/{repo}/releases/download/{tag}/keyframes_bundle.tar.gz"
+    audio_url = f"https://github.com/{repo}/releases/download/{tag}/audio_bundle.tar.gz"
+    return kf_url, audio_url
+
 
 
 def _scan_keyframes(keyframes_dir: Path, part_prefix: str) -> List[str]:
@@ -53,14 +58,16 @@ def ensure_part_assets(project_root: str, part_index: int) -> Tuple[str, List[st
     existing_kfs = _scan_keyframes(keyframes_dir, part_prefix)
     target_beats = getattr(config, "TARGET_BEATS_PER_PART", 10) if config else 10
 
+    kf_release_url, audio_release_url = get_release_urls()
+
     # 1. Fetch keyframes if deficient
     if len(existing_kfs) < target_beats:
-        print(f"[ASSET] Part {part_index:02d} has {len(existing_kfs)}/{target_beats} keyframes. Fetching from CDN...")
+        print(f"[ASSET] Part {part_index:02d} has {len(existing_kfs)}/{target_beats} keyframes. Fetching from CDN ({kf_release_url})...")
         bundle_tar = root_path / "keyframes_bundle.tar.gz"
         try:
             if not bundle_tar.exists() or bundle_tar.stat().st_size == 0:
                 tmp_tar = bundle_tar.with_suffix(".tar.tmp")
-                req = urllib.request.Request(KEYFRAMES_RELEASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+                req = urllib.request.Request(kf_release_url, headers={"User-Agent": "Mozilla/5.0"})
                 with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_tar, "wb") as f_out:
                     shutil.copyfileobj(resp, f_out)
                 tmp_tar.replace(bundle_tar)
@@ -88,12 +95,12 @@ def ensure_part_assets(project_root: str, part_index: int) -> Tuple[str, List[st
             except Exception:
                 shutil.copy2(found_wavs[0], audio_path)
         else:
-            print(f"[ASSET] {expected_wav_name} not found. Fetching audio bundle from CDN...")
+            print(f"[ASSET] {expected_wav_name} not found. Fetching audio bundle from CDN ({audio_release_url})...")
             audio_tar = root_path / "audio_bundle.tar.gz"
             try:
                 if not audio_tar.exists() or audio_tar.stat().st_size == 0:
                     tmp_tar = audio_tar.with_suffix(".tar.tmp")
-                    req = urllib.request.Request(AUDIO_RELEASE_URL, headers={"User-Agent": "Mozilla/5.0"})
+                    req = urllib.request.Request(audio_release_url, headers={"User-Agent": "Mozilla/5.0"})
                     with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_tar, "wb") as f_out:
                         shutil.copyfileobj(resp, f_out)
                     tmp_tar.replace(audio_tar)
