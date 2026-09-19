@@ -16,11 +16,7 @@ if _DIR not in sys.path:
     sys.path.insert(0, _DIR)
 
 from tar_archive_guard import SecurityError, safe_extract_tarball
-from part_asset_resolver import (
-    KEYFRAMES_RELEASE_URL,
-    AUDIO_RELEASE_URL,
-    ensure_part_assets
-)
+from part_asset_resolver import ensure_part_assets
 
 import config
 from chunk_renderer import render_part_chunk, is_chunk_valid

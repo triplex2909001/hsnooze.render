@@ -28,6 +28,9 @@ def get_release_urls() -> Tuple[str, str]:
     audio_url = f"https://github.com/{repo}/releases/download/{tag}/audio_bundle.tar.gz"
     return kf_url, audio_url
 
+KEYFRAMES_RELEASE_URL, AUDIO_RELEASE_URL = get_release_urls()
+
+
 
 
 def _scan_keyframes(keyframes_dir: Path, part_prefix: str) -> List[str]:

@@ -58,7 +58,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           PROJECT_FOLDER_ID: ${{ inputs.project_folder_id }}
         run: |
-          python3 render_single_part.py "./project_assets" ${{ matrix.part }} 4
+          python3 render_single_part.py "./project_assets" ${{ matrix.part }} 4 --cpu
 
       - name: Upload Chunk Artifact (Part ${{ matrix.part }})
         uses: actions/upload-artifact@v4
