@@ -27,7 +27,7 @@ jobs:
   render_matrix:
     name: Render Part ${{ matrix.part }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 270
 
     strategy:
       fail-fast: false
@@ -75,7 +75,7 @@ jobs:
     name: Assemble Master Video & GK7 Audit
     needs: render_matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 270
 
     steps:
       - name: Checkout Code
