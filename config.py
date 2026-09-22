@@ -25,13 +25,21 @@ INTER_PARAGRAPH_SILENCE_SEC = 2.0 # 2.0s silence between paragraphs
 
 # Story Structure
 TOTAL_PARTS = 15
-EXPECTED_MIN_BEATS = 150  # Scaled for 150-160 high-density beats (~10 beats/part)
-EXPECTED_MAX_BEATS = 160
-TARGET_BEATS_PER_PART = 10
-BEAT_MIN_DURATION_SEC = 25.0
-BEAT_MAX_DURATION_SEC = 45.0
+EXPECTED_MIN_BEATS = 450  # Scaled for 450 high-density beats (30 beats/part)
+EXPECTED_MAX_BEATS = 480
+TARGET_BEATS_PER_PART = 30
+BEAT_MIN_DURATION_SEC = 15.0
+BEAT_MAX_DURATION_SEC = 30.0
 CHUNK_MIN_WORDS = 15
 CHUNK_MAX_WORDS = 35
+
+# Sleep Mood & Ambient Shading
+SLEEP_DARK_OPACITY = 0.40   # 40% dark overlay after 'dim the lights'
+SLEEP_BRIGHTNESS = -0.18
+SLEEP_GAMMA = 0.72
+SLEEP_CONTRAST = 0.88
+CAMPFIRE_AUDIO_PATH = "assets/ambient_campfire_loop.wav"
+CAMPFIRE_VOLUME = 0.14      # Subtle crackle under voiceover (-28 LUFS target)
 
 # Google Workspace Integration IDs
 PARENT_FOLDER_ID = "1UGkrUFQ62ghj1Lquy1HVsKIYR9nO60zf"  # 'historysnooze posts'

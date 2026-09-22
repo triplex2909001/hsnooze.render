@@ -76,6 +76,8 @@ def build_filter_graph(
         f"d={total_frames}:s={width}x{height}:fps={fps}"
     )
 
+    dark_op = getattr(config, "SLEEP_DARK_OPACITY", 0.40) if config else 0.40
+    dark_box = f",drawbox=x=0:y=0:w=iw:h=ih:color=black@{dark_op:.2f}:t=fill" if dark_op > 0 else ""
     vig_str = vignette if vignette is not None else DEFAULT_VIGNETTE
     if vig_str and str(vig_str).strip().lower() not in ("none", "0", "false", ""):
         if ":aspect=" in str(vig_str):
@@ -84,11 +86,11 @@ def build_filter_graph(
             vig_str = f"{vig_str}:aspect={width}/{height}"
         grade_filter = (
             f"eq=contrast={contrast:.2f}:brightness={brightness:.2f}:saturation={saturation:.2f}:gamma={gamma:.2f},"
-            f"vignette={vig_str}"
+            f"vignette={vig_str}{dark_box}"
         )
     else:
         grade_filter = (
-            f"eq=contrast={contrast:.2f}:brightness={brightness:.2f}:saturation={saturation:.2f}:gamma={gamma:.2f}"
+            f"eq=contrast={contrast:.2f}:brightness={brightness:.2f}:saturation={saturation:.2f}:gamma={gamma:.2f}{dark_box}"
         )
 
     if is_transition_beat:
