@@ -17,8 +17,9 @@ RESOLUTION = f"{WIDTH}x{HEIGHT}"
 CPU_PRESET = "veryfast"  # Fast CPU encoding for Cloud Runners (GitHub Actions)
 
 # Ken Burns ASMR Motion Parameters
-ZOOM_START = 1.00
-ZOOM_MAX = 1.04          # Maximum 4% zoom over 25-45s (~30-45s per beat)
+ZOOM_BASE = 1.10           # Watermark-safe base zoom: view never includes the outer ~4.5% edge
+                         # zone, so watermarks, edge borders and corner artifacts stay out of frame (V.2 rule)
+ZOOM_MAX = 1.15            # End of Ken Burns drift over 25-45s (~30-45s per beat); keeps motion subtle
 INTER_PART_SILENCE_SEC = 5.0  # 5-second silence between parts
 INTRA_SENTENCE_SILENCE_SEC = 1.0 # 1.0s silence between sentences
 INTER_PARAGRAPH_SILENCE_SEC = 2.0 # 2.0s silence between paragraphs
@@ -34,10 +35,11 @@ CHUNK_MIN_WORDS = 15
 CHUNK_MAX_WORDS = 35
 
 # Sleep Mood & Ambient Shading
-SLEEP_DARK_OPACITY = 0.40   # 40% dark overlay after 'dim the lights'
-SLEEP_BRIGHTNESS = -0.18
-SLEEP_GAMMA = 0.72
-SLEEP_CONTRAST = 0.88
+SLEEP_DARK_OPACITY = 0.00   # 0% dark overlay box (no drawbox crushing)
+SLEEP_BRIGHTNESS = -0.04    # Gentle 4% dimming for bedtime comfort without losing detail
+SLEEP_GAMMA = 0.95          # Soft gamma curve
+SLEEP_CONTRAST = 0.96       # Soothing soft contrast
+SLEEP_SATURATION = 0.92     # Calming subtle desaturation
 CAMPFIRE_AUDIO_PATH = "assets/ambient_campfire_loop.wav"
 CAMPFIRE_VOLUME = 0.14      # Subtle crackle under voiceover (-28 LUFS target)
 
