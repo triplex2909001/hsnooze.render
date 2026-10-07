@@ -46,6 +46,33 @@ def resolve_stardust_asset_path(custom_path: Optional[str] = None) -> Optional[s
     return None
 
 
+def resolve_campfire_asset_path(custom_path: Optional[str] = None) -> Optional[str]:
+    """Resolves absolute path to ambient_campfire_loop.wav across repo, local, and Colab paths."""
+    def _is_valid(p: Optional[str]) -> bool:
+        return bool(p and os.path.isfile(p) and os.access(p, os.R_OK) and os.path.getsize(p) > 0)
+
+    if custom_path is not None:
+        return os.path.abspath(custom_path) if _is_valid(custom_path) else None
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(base_dir)
+
+    candidates = [
+        custom_path,
+        os.path.join(os.getcwd(), "assets", "ambient_campfire_loop.wav"),
+        os.path.join(base_dir, "assets", "ambient_campfire_loop.wav"),
+        os.path.join(project_root, "assets", "ambient_campfire_loop.wav"),
+        "/content/assets/ambient_campfire_loop.wav",
+        "/content/drive/MyDrive/assets/ambient_campfire_loop.wav"
+    ]
+
+    for cand in candidates:
+        if cand and _is_valid(cand):
+            return os.path.abspath(cand)
+
+    return None
+
+
 def resolve_part01_cue_timestamps(
     audio_wav_path: str,
     custom_cue_path: Optional[str] = None

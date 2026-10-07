@@ -22,9 +22,15 @@ from chunk_asset_resolver import (
     DEFAULT_P01_CUE_START_SEC,
     DEFAULT_P01_CUE_END_SEC,
     resolve_stardust_asset_path,
+    resolve_campfire_asset_path,
     resolve_part01_cue_timestamps
 )
 from chunk_cleaner import cleanup_chunk_intermediates
+
+try:
+    import config
+except ImportError:
+    config = None
 
 logger = logging.getLogger("hsnooze.render.chunk_renderer")
 MIN_VALID_CHUNK_BYTES = 10 * 1024 * 1024
@@ -113,7 +119,35 @@ def render_part_chunk(
                 f_c.write(f"file '{os.path.abspath(path)}'\n")
 
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", concat_list, "-c", "copy", temp_vid], check=True)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", temp_vid, "-i", audio_wav_path, "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest", chunk_path], check=True)
+
+        campfire_path = resolve_campfire_asset_path()
+        campfire_vol = getattr(config, "CAMPFIRE_VOLUME", 0.14) if config else 0.14
+        if campfire_path and os.path.exists(campfire_path):
+            if part_index == 1:
+                t0 = max(0.0, dim_start_sec)
+                delta = max(0.1, dim_end_sec - dim_start_sec)
+                afilter = f"[1:a] volume={campfire_vol:.2f},afade=t=in:st={t0:.3f}:d={delta:.3f} [cf]; [0:a][cf] amix=inputs=2:duration=first:dropout_transition=0:weights=1.0 1.0 [aout]"
+            else:
+                afilter = f"[1:a] volume={campfire_vol:.2f} [cf]; [0:a][cf] amix=inputs=2:duration=first:dropout_transition=0:weights=1.0 1.0 [aout]"
+            cmd_mux = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", temp_vid,
+                "-i", audio_wav_path,
+                "-stream_loop", "-1", "-i", campfire_path,
+                "-filter_complex", afilter,
+                "-map", "0:v", "-map", "[aout]",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "256k",
+                "-shortest", chunk_path
+            ]
+        else:
+            cmd_mux = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-i", temp_vid,
+                "-i", audio_wav_path,
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "256k",
+                "-shortest", chunk_path
+            ]
+        subprocess.run(cmd_mux, check=True)
         success = True
     finally:
         cleanup_chunk_intermediates(temp_dir, part_index, beat_clips, expected_clips, concat_list, temp_vid, temp_chunk, chunk_path, success)
