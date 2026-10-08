@@ -48,12 +48,9 @@ def build_render_command(
     if duration <= 0.0:
         raise ValueError(f"duration must be strictly positive, got {duration}")
 
-    has_overlay = bool(
-        overlay_asset_path
-        and os.path.isfile(overlay_asset_path)
-        and os.access(overlay_asset_path, os.R_OK)
-        and os.path.getsize(overlay_asset_path) > 0
-    )
+    # 2026-10-08: Stardust/bubble particle overlay DISABLED per user request.
+    # The floating dust specks read as dirt/artifacts on the final video.
+    has_overlay = False
 
     total_frames = max(1, int(duration * fps))
 

@@ -69,7 +69,6 @@ def build_filter_graph(
 ) -> Tuple[str, Optional[str]]:
     """Constructs FFmpeg filter graph (filter_string, output_label_or_None)."""
     total_frames = max(1, total_frames)
-    zoom_expr, x_expr, y_expr = build_zoompan_expr(zoom_in, total_frames)
 
     pad_w = int(width * 1.10)
     pad_h = int(height * 1.10)
@@ -78,11 +77,13 @@ def build_filter_graph(
     if pad_h % 2 != 0:
         pad_h += 1
 
+    # 2026-10-08: Ken Burns DISABLED per user request (zoompan output was jerky).
+    # Static frames: keep the 1.10x watermark-safe centered crop, zero movement.
+    # (build_zoompan_expr kept intact for easy re-enable if needed.)
     kb_filter = (
         f"scale={pad_w}x{pad_h}:force_original_aspect_ratio=increase,"
         f"crop={pad_w}:{pad_h},"
-        f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':"
-        f"d={total_frames}:s={width}x{height}:fps={fps}"
+        f"crop={width}:{height}"
     )
 
     if is_transition_beat:
