@@ -1,0 +1,129 @@
+name: HistorySnooze YouTube Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_source:
+        description: 'Video source: "drive:<file_id>" or "artifact:<run_id>/<artifact_name>"'
+        required: true
+        default: 'drive:'
+        type: string
+      title:
+        description: 'Video title'
+        required: true
+        type: string
+      description:
+        description: 'Video description'
+        required: false
+        default: ''
+        type: string
+      tags:
+        description: 'Comma-separated tags'
+        required: false
+        default: 'history, sleep story, bedtime stories, history snooze'
+        type: string
+      thumbnail_drive_id:
+        description: 'Google Drive file ID of custom thumbnail (optional)'
+        required: false
+        default: ''
+        type: string
+      schedule_time:
+        description: 'ISO 8601 publish time, e.g. 2026-10-12T21:00:00+07:00 (empty = use visibility)'
+        required: false
+        default: ''
+        type: string
+      visibility:
+        description: 'Visibility when no schedule_time is set'
+        required: false
+        default: 'private'
+        type: choice
+        options: [public, unlisted, private]
+
+jobs:
+  upload:
+    name: Upload to YouTube
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install --quiet google-api-python-client google-auth
+
+      - name: Fetch Video from Drive
+        if: startsWith(inputs.video_source, 'drive:')
+        env:
+          GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
+        run: |
+          FILE_ID="${{ inputs.video_source }}"
+          FILE_ID="${FILE_ID#drive:}"
+          if [ -z "$FILE_ID" ]; then
+            echo "ERROR: video_source is 'drive:' but no file ID given" >&2
+            exit 1
+          fi
+          echo "$GDRIVE_SA_JSON" > /tmp/sa.json
+          pip install --quiet gdown
+          # gdown handles large Drive files via confirmation bypass
+          gdown --fuzzy "https://drive.google.com/uc?id=${FILE_ID}" -O /tmp/video.mp4
+          ls -lh /tmp/video.mp4
+
+      - name: Fetch Video from Artifact
+        if: startsWith(inputs.video_source, 'artifact:')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SPEC="${{ inputs.video_source }}"
+          SPEC="${SPEC#artifact:}"
+          RUN_ID="${SPEC%%/*}"
+          ART_NAME="${SPEC#*/}"
+          gh run download "$RUN_ID" -n "$ART_NAME" -D /tmp/art
+          VIDEO=$(find /tmp/art -name '*.mp4' | head -1)
+          if [ -z "$VIDEO" ]; then
+            echo "ERROR: no .mp4 found in artifact $ART_NAME" >&2
+            exit 1
+          fi
+          cp "$VIDEO" /tmp/video.mp4
+          ls -lh /tmp/video.mp4
+
+      - name: Fetch Thumbnail from Drive
+        if: inputs.thumbnail_drive_id != ''
+        run: |
+          pip install --quiet gdown
+          gdown --fuzzy "https://drive.google.com/uc?id=${{ inputs.thumbnail_drive_id }}" -O /tmp/thumb.jpg
+          ls -lh /tmp/thumb.jpg || true
+
+      - name: Upload to YouTube
+        id: yt
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          ARGS=(--video /tmp/video.mp4 --title "${{ inputs.title }}")
+          [ -n "${{ inputs.description }}" ] && ARGS+=(--description "${{ inputs.description }}")
+          [ -n "${{ inputs.tags }}" ] && ARGS+=(--tags "${{ inputs.tags }}")
+          [ -f /tmp/thumb.jpg ] && ARGS+=(--thumbnail /tmp/thumb.jpg)
+          [ -n "${{ inputs.schedule_time }}" ] && ARGS+=(--schedule "${{ inputs.schedule_time }}")
+          [ -z "${{ inputs.schedule_time }}" ] && ARGS+=(--visibility "${{ inputs.visibility }}")
+          python3 tools/youtube_upload.py "${ARGS[@]}"
+
+      - name: Report
+        run: |
+          echo "## YouTube Upload Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Title:** ${{ inputs.title }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Video ID:** \`${{ steps.yt.outputs.video_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL:** ${{ steps.yt.outputs.video_url }}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.schedule_time }}" ]; then
+            echo "- **Scheduled for:** ${{ inputs.schedule_time }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Visibility:** ${{ inputs.visibility }}" >> $GITHUB_STEP_SUMMARY
+          fi
